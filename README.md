@@ -39,12 +39,22 @@ Each agent has its own chat interface where you can interact, guide, and overrid
 
 ```mermaid
 flowchart TD
-    A[💡 You describe your idea] --> B[🏗️ Architect\nSRS + HLD]
-    B --> C[🎨 UI Designer\nHTML/CSS Mockup]
-    C --> D[📋 Dev Lead\nWork Plan + Tasks]
-    D --> E[💻 Coding Agents x6\nParallel Execution]
-    E --> F[🐛 Bug Fixer\nQA + Auto-Fixes]
-    F --> G[✅ Your project is ready]
+    A["💡 You describe your idea"] --> B["🏗️ Architect — SRS + HLD"]
+    B --> C["🎨 UI Designer — HTML/CSS Mockup"]
+    C --> D["📋 Dev Lead — Work Plan + Tasks"]
+    D --> E1["⚙️ Backend Engineer"]
+    D --> E2["🎨 Frontend Engineer"]
+    D --> E3["🔧 DevOps Engineer"]
+    D --> E4["🧪 QA Engineer"]
+    D --> E5["🔗 Integration Engineer"]
+    D --> E6["📦 Setup Engineer"]
+    E1 --> F["🐛 Bug Fixer — QA + Auto-Fixes"]
+    E2 --> F
+    E3 --> F
+    E4 --> F
+    E5 --> F
+    E6 --> F
+    F --> G["✅ Your project is ready"]
 ```
 
 ### 💻 The 6 Specialist Coding Agents
