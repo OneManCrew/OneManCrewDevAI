@@ -42,19 +42,15 @@ flowchart TD
     A["💡 You describe your idea"] --> B["🏗️ Architect — SRS + HLD"]
     B --> C["🎨 UI Designer — HTML/CSS Mockup"]
     C --> D["📋 Dev Lead — Work Plan + Tasks"]
-    D --> E1["⚙️ Backend Engineer"]
-    D --> E2["🎨 Frontend Engineer"]
-    D --> E3["🔧 DevOps Engineer"]
-    D --> E4["🧪 QA Engineer"]
-    D --> E5["🔗 Integration Engineer"]
-    D --> E6["📦 Setup Engineer"]
-    E1 --> F["🐛 Bug Fixer — QA + Auto-Fixes"]
-    E2 --> F
-    E3 --> F
-    E4 --> F
-    E5 --> F
-    E6 --> F
+    D --> E["💻 Coding Agents x6 — Parallel Execution"]
+    E --> F["🐛 Bug Fixer — QA + Auto-Fixes"]
     F --> G["✅ Your project is ready"]
+    E --- E1["⚙️ Backend Engineer"]
+    E --- E2["🎨 Frontend Engineer"]
+    E --- E3["🔧 DevOps Engineer"]
+    E --- E4["🧪 QA Engineer"]
+    E --- E5["🔗 Integration Engineer"]
+    E --- E6["📦 Setup Engineer"]
 ```
 
 ### 💻 The 6 Specialist Coding Agents
