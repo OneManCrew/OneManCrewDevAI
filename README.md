@@ -38,40 +38,40 @@ Each agent has its own chat interface where you can interact, guide, and overrid
 ## 🎬 How It Works
 
 ```
-                    You describe your idea
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │    Architect     │
-                    │   SRS + HLD     │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │   UI Designer   │
-                    │    HTML/CSS     │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │    Dev Lead     │
-                    │   Work Plan     │
-                    └────────┬────────┘
-                             │
-                             ▼
-                  ┌─────────────────────┐
-                  │  Coding Agents (x6) │
-                  │ Parallel execution  │
-                  └──────────┬──────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │   Bug Fixer     │
-                    │   QA + Fixes    │
-                    └────────┬────────┘
-                             │
-                             ▼
-                  ✅ Your project is ready
+        You describe your idea
+                 |
+                 v
+        +-------------------+
+        |    Architect      |
+        |    SRS + HLD      |
+        +-------------------+
+                 |
+                 v
+        +-------------------+
+        |   UI Designer     |
+        |    HTML/CSS       |
+        +-------------------+
+                 |
+                 v
+        +-------------------+
+        |    Dev Lead       |
+        |    Work Plan      |
+        +-------------------+
+                 |
+                 v
+        +-------------------+
+        | Coding Agents x6  |
+        | Parallel execution|
+        +-------------------+
+                 |
+                 v
+        +-------------------+
+        |    Bug Fixer      |
+        |    QA + Fixes     |
+        +-------------------+
+                 |
+                 v
+        Your project is ready
 ```
 
 ---
