@@ -38,28 +38,40 @@ Each agent has its own chat interface where you can interact, guide, and overrid
 ## 🎬 How It Works
 
 ```
- You describe your idea
-        │
-        ▼
- ┌─────────────┐     ┌──────────────┐     ┌─────────────┐
- │  Architect   │────▶│  UI Designer │────▶│  Dev Lead   │
- │  SRS + HLD   │     │  HTML/CSS    │     │  Work Plan  │
- └─────────────┘     └──────────────┘     └─────────────┘
-                                                 │
-                                                 ▼
-                                    ┌────────────────────────┐
-                                    │    Coding Agents (x6)  │
-                                    │  Parallel task execution│
-                                    └────────────────────────┘
-                                                 │
-                                                 ▼
-                                          ┌────────────┐
-                                          │  Bug Fixer  │
-                                          │  QA + Fixes │
-                                          └────────────┘
-                                                 │
-                                                 ▼
-                                        Your project is ready
+                    You describe your idea
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │    Architect     │
+                    │   SRS + HLD     │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │   UI Designer   │
+                    │    HTML/CSS     │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │    Dev Lead     │
+                    │   Work Plan     │
+                    └────────┬────────┘
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │  Coding Agents (x6) │
+                  │ Parallel execution  │
+                  └──────────┬──────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │   Bug Fixer     │
+                    │   QA + Fixes    │
+                    └────────┬────────┘
+                             │
+                             ▼
+                  ✅ Your project is ready
 ```
 
 ---
