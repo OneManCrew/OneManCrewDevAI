@@ -74,6 +74,21 @@ Each agent has its own chat interface where you can interact, guide, and overrid
         Your project is ready
 ```
 
+### 💻 The 6 Specialist Coding Agents
+
+The Dev Lead assigns each task to the most appropriate specialist. These agents work **in parallel** — multiple tasks execute simultaneously for maximum speed.
+
+| Agent | Specialty | Expertise |
+|-------|-----------|-----------|
+| ⚙️ **Backend Engineer** | Server-side & API | Node.js, Python, Java, Go, C#, REST, GraphQL, databases, ORMs, middleware, microservices |
+| 🎨 **Frontend Engineer** | UI Implementation | React, Angular, Vue, Svelte, HTML/CSS, Tailwind, responsive design, animations, components |
+| 🔧 **DevOps Engineer** | Infrastructure & CI/CD | Docker, Kubernetes, CI/CD pipelines, Nginx, cloud (AWS/Azure/GCP), scripting, monitoring |
+| 🧪 **QA Engineer** | Testing & Quality | Unit tests, E2E tests, Jest, Playwright, Cypress, pytest, coverage, TDD/BDD |
+| 🔗 **Integration Engineer** | System Wiring | API clients, state management (Redux/Zustand), data flow, WebSockets, service layers |
+| 📦 **Setup Engineer** | Packaging & Config | Build tools (Vite/Webpack), installers, project scaffolding, dependency management, electron-builder |
+
+Each agent receives a tailored system prompt with 25-35 years of domain expertise, ensuring high-quality, production-ready code output.
+
 ---
 
 ## 🚀 Getting Started
