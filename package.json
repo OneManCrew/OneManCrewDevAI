@@ -1,15 +1,35 @@
 {
-  "name": "onemancrew-ai",
+  "name": "onemancrew-dev-ai",
   "version": "1.0.0",
-  "description": "OneManCrew AI - Electron Application",
+  "description": "AI Agent Workspace built with Electron and React",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev"
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite --config vite.config.js",
+    "dev:electron": "wait-on tcp:5173 && cross-env ELECTRON_START_URL=http://localhost:5173 node scripts/launch-electron.js",
+    "build": "vite build --config vite.config.js",
+    "start": "node scripts/launch-electron.js",
+    "preview": "vite preview --config vite.config.js"
   },
-  "author": "OneManCrew",
+  "author": "",
   "license": "MIT",
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.19",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
+    "remark-gfm": "^4.0.1"
+  },
   "devDependencies": {
-    "electron": "^28.0.0"
+    "@vitejs/plugin-react": "^4.4.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^30.5.1",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "vite": "^5.4.14",
+    "wait-on": "^8.0.3"
   }
 }
