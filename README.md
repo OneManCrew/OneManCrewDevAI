@@ -37,41 +37,14 @@ Each agent has its own chat interface where you can interact, guide, and overrid
 
 ## 🎬 How It Works
 
-```
-        You describe your idea
-                 |
-                 v
-        +-------------------+
-        |    Architect      |
-        |    SRS + HLD      |
-        +-------------------+
-                 |
-                 v
-        +-------------------+
-        |   UI Designer     |
-        |    HTML/CSS       |
-        +-------------------+
-                 |
-                 v
-        +-------------------+
-        |    Dev Lead       |
-        |    Work Plan      |
-        +-------------------+
-                 |
-                 v
-        +-------------------+
-        | Coding Agents x6  |
-        | Parallel execution|
-        +-------------------+
-                 |
-                 v
-        +-------------------+
-        |    Bug Fixer      |
-        |    QA + Fixes     |
-        +-------------------+
-                 |
-                 v
-        Your project is ready
+```mermaid
+flowchart TD
+    A[💡 You describe your idea] --> B[🏗️ Architect\nSRS + HLD]
+    B --> C[🎨 UI Designer\nHTML/CSS Mockup]
+    C --> D[📋 Dev Lead\nWork Plan + Tasks]
+    D --> E[💻 Coding Agents x6\nParallel Execution]
+    E --> F[🐛 Bug Fixer\nQA + Auto-Fixes]
+    F --> G[✅ Your project is ready]
 ```
 
 ### 💻 The 6 Specialist Coding Agents
