@@ -457,18 +457,16 @@ try {
     // Design tokens
     const colors = ${designTokensJson};
     window.__designTokens = colors;
-  <\/script>
 
-  ${componentScripts}
-
-  <script>
-    // Catch Babel compilation errors
+    // Catch Babel compilation errors early
     window.onerror = function(msg, src, line, col, err) {
       var el = document.getElementById('preview-error');
       el.style.display = 'block';
       el.textContent = 'Error: ' + msg + '\\nLine: ' + line + '\\n\\n' + (err ? err.stack : '');
     };
   <\/script>
+
+  ${componentScripts}
 </body>
 </html>`;
 
