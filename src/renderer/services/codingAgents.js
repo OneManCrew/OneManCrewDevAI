@@ -632,7 +632,46 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
   const cmdExtractor = new IncrementalCommandExtractor();
   const envExtractor = new IncrementalEnvVarExtractor();
 
-  const srcBase = projectPath ? projectPath.replace(/[\\/]$/, '') + '/src' : '';
+  const projectRoot = projectPath ? projectPath.replace(/[\\/]$/, '') : '';
+  const srcBase = projectRoot ? projectRoot + '/src' : '';
+
+  // Files that belong in the project root, NOT inside src/
+  const ROOT_FILE_PATTERNS = [
+    /^package\.json$/i,
+    /^package-lock\.json$/i,
+    /^main\.js$/i,
+    /^preload\.js$/i,
+    /^electron\.js$/i,
+    /^readme\.md$/i,
+    /^\.gitignore$/i,
+    /^\.env(\..*)?$/i,
+    /^tsconfig\.json$/i,
+    /^vite\.config\.\w+$/i,
+    /^webpack\.config\.\w+$/i,
+    /^jest\.config\.\w+$/i,
+    /^babel\.config\.\w+$/i,
+    /^\.eslintrc/i,
+    /^\.prettierrc/i,
+    /^Dockerfile$/i,
+    /^docker-compose/i,
+    /^Makefile$/i,
+  ];
+
+  function resolveFilePath(filePath) {
+    if (!projectRoot) return filePath;
+    const normalized = filePath.replace(/\\/g, '/');
+    const baseName = normalized.split('/').pop();
+    // If the path already starts with src/, write relative to project root
+    if (/^src[/\\]/i.test(normalized)) {
+      return projectRoot + '/' + normalized;
+    }
+    // If it's a known root-level file, write to project root
+    if (ROOT_FILE_PATTERNS.some(p => p.test(baseName)) && !normalized.includes('/')) {
+      return projectRoot + '/' + normalized;
+    }
+    // Everything else goes into src/
+    return srcBase + '/' + normalized;
+  }
 
   // Serialized queue to prevent concurrent processStream races
   let _processingChain = Promise.resolve();
@@ -651,9 +690,9 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
     const newFiles = fileExtractor.update(fullOutput);
     for (const file of newFiles) {
       allFiles.push(file);
-      if (srcBase) {
+      if (projectRoot) {
         try {
-          const fullPath = srcBase + '/' + file.path;
+          const fullPath = resolveFilePath(file.path);
           await api.safeWriteFile(fullPath, file.content);
           if (onFileWritten) onFileWritten(file);
           // Post-write syntax validation for JS/JSX files
