@@ -242,6 +242,22 @@ Before marking a task as done, a lightweight shadow LLM call reviews the output:
 - Pragmatic — only fails for genuinely missing functionality, not style issues
 - Max 2 review rounds per task
 
+### Integration Check (Post-Phase Validation)
+
+After **every batch/phase** completes, the orchestrator automatically runs `runIntegrationCheck()` from `agentTools.js`. This tool performs:
+
+1. **HTML import verification** — Scans all candidate `index.html` files and checks that every `<script src="...">` and `<link rel="stylesheet" href="...">` points to a file that **actually exists on disk**
+2. **package.json validation** — Verifies `"main"` field points to an existing file, and that `start`, `dev`, `build` scripts exist
+3. **Electron-specific** — If Electron is a dependency, verifies `main.js` references a valid `index.html` via `loadFile()`/`loadURL()`
+
+**Auto-Fix Flow:**
+- If the check **passes** → continue to next phase
+- If the check **fails** → the orchestrator automatically creates a synthetic fix task (assigned to Setup Engineer, priority: critical) with all issues listed, and executes it immediately via the same `executeTask()` infrastructure — **no user interaction required**
+- After the fix, a **re-check** runs to verify the issues are resolved
+- The `onIntegrationCheck` callback notifies the UI of results
+
+Issue types detected: `BROKEN_IMPORT`, `MISSING_FILE`, `MISSING_SCRIPT`, `MISSING`, `BROKEN_ELECTRON`, `INVALID`
+
 ### Syntax Validation
 
 After every `.js`/`.jsx` file write:
@@ -285,7 +301,9 @@ All shell commands execute through a sequential `CommandQueue` in `main.js`:
 | `CodingOrchestrator` | Main orchestrator: batch execution, Stop-on-Failure, shared knowledge updates |
 | `CodingOrchestrator._generateLLMSummary()` | LLM-generated 2-sentence task summary (files + API/Props) |
 | `CodingOrchestrator._generateEntityIndex()` | LLM-generated structured entity extraction (functions, components, API routes, env vars) |
+| `CodingOrchestrator._runIntegrationCheck(batchIdx)` | Post-phase integration check with auto-fix dispatch |
 | `CodingOrchestrator._updateContextSummary()` | Merges task results into `context_summary.json` |
+| `runIntegrationCheck(projectPath)` | Scans HTML imports, package.json main/scripts, Electron loadFile — returns `{ passed, issues[] }` |
 
 ---
 

@@ -5,6 +5,7 @@
  */
 
 import { createLLMProvider, getAgentSettings } from './llmProviders.js';
+import { runIntegrationCheck } from './agentTools.js';
 import api from './electronBridge.js';
 
 // ─── Agent Type Definitions ─────────────────────────────────────────────────────
@@ -1001,7 +1002,7 @@ function _buildTaskSummary(task, files, exports, technologies, commands) {
  * Executes batches sequentially, tasks within a batch in parallel.
  */
 export class CodingOrchestrator {
-  constructor({ workplan, projectContext, settings, projectPath, onTaskUpdate, onBatchComplete, onAllComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onFailureDecision }) {
+  constructor({ workplan, projectContext, settings, projectPath, onTaskUpdate, onBatchComplete, onAllComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onFailureDecision, onIntegrationCheck }) {
     this.workplan = workplan;
     this.projectContext = projectContext;
     this.settings = settings;
@@ -1014,6 +1015,7 @@ export class CodingOrchestrator {
     this.onFileWritten = onFileWritten || null;
     this.onCommandExecuted = onCommandExecuted || null;
     this.onFailureDecision = onFailureDecision || null; // async (task, plan) => 'continue' | 'stop'
+    this.onIntegrationCheck = onIntegrationCheck || null; // (result) => void
 
     this.executionPlan = buildExecutionPlan(workplan);
     this.batches = buildParallelBatches(this.executionPlan);
@@ -1133,6 +1135,11 @@ export class CodingOrchestrator {
         }
 
         this.onBatchComplete(batchIdx, this.batches.length);
+
+        // ─── Integration Check: run after each phase/batch ────────────────
+        if (this.projectPath && !this.isCancelled) {
+          await this._runIntegrationCheck(batchIdx);
+        }
       }
 
       this.onAllComplete(this.allFiles, this.executionPlan);
@@ -1140,6 +1147,89 @@ export class CodingOrchestrator {
       this.onError(err);
     } finally {
       this.isRunning = false;
+    }
+  }
+
+  /**
+   * Runs an integration check after a batch completes.
+   * If issues are found, auto-creates bug tickets and dispatches fixes immediately.
+   */
+  async _runIntegrationCheck(batchIdx) {
+    try {
+      const result = await runIntegrationCheck(this.projectPath);
+
+      // Notify listener
+      if (this.onIntegrationCheck) {
+        this.onIntegrationCheck({ batchIdx, ...result });
+      }
+
+      if (result.passed) {
+        console.log(`[IntegrationCheck] Batch ${batchIdx} passed ✓`);
+        return;
+      }
+
+      console.warn(`[IntegrationCheck] Batch ${batchIdx} found ${result.issues.length} issue(s):`, result.issues);
+
+      // Auto-fix: create a synthetic task for each issue group and execute it
+      const fixDescription = result.issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n');
+
+      const fixTask = {
+        id: `integration-fix-batch-${batchIdx}-${Date.now()}`,
+        title: `Integration Fix: Batch ${batchIdx} — ${result.issues.length} issue(s)`,
+        description: `The automated integration check found the following issues after completing batch ${batchIdx}:\n\n${fixDescription}\n\n## Fix Instructions\nFor each issue:\n- BROKEN_IMPORT: Create the missing file or fix the reference path in the HTML\n- MISSING_FILE: Create the missing file that package.json or main.js references\n- MISSING_SCRIPT: Add the missing npm script to package.json with the correct command\n- MISSING: Create the missing file (e.g., index.html for Electron apps)\n- BROKEN_ELECTRON: Fix the loadFile/loadURL path in main.js to point to the correct index.html\n- INVALID: Fix the JSON syntax in package.json\n\nFix ALL issues. Do NOT skip any.`,
+        assignedAgent: AGENT_TYPES.SETUP,
+        acceptanceCriteria: result.issues.map(issue => `Fixed: ${issue}`),
+        technicalNotes: 'This is an auto-generated integration fix task. Fix all broken paths and missing files.',
+        category: 'integration',
+        priority: 'critical',
+      };
+
+      // Execute the fix task using the same infrastructure
+      const logger = new TaskLogger(this.projectPath, fixTask.id);
+      logger.start(fixTask);
+
+      try {
+        await executeTask(fixTask, this.projectContext, this.settings, {
+          onProgress: () => {},
+          onComplete: async ({ files, commands }) => {
+            logger.complete(files || [], commands || []);
+            this.allFiles.push(...(files || []));
+            // Update context summary with fix results
+            if (files?.length > 0) {
+              await this._updateContextSummary(fixTask, files);
+            }
+            console.log(`[IntegrationCheck] Auto-fix completed: ${files?.length || 0} files written`);
+          },
+          onError: (err) => {
+            logger.error(err.message || 'Integration fix failed');
+            console.error('[IntegrationCheck] Auto-fix failed:', err.message);
+          },
+          onFileWritten: (file) => {
+            logger.fileWritten(file);
+            if (this.onFileWritten) this.onFileWritten(fixTask, file);
+          },
+          onCommandExecuted: (cmd, res) => {
+            logger.commandExecuted(cmd, res);
+            if (this.onCommandExecuted) this.onCommandExecuted(fixTask, cmd, res);
+          },
+        }, this.projectPath);
+
+        // Re-run the check to verify the fix worked
+        const recheck = await runIntegrationCheck(this.projectPath);
+        if (this.onIntegrationCheck) {
+          this.onIntegrationCheck({ batchIdx, recheck: true, ...recheck });
+        }
+        if (!recheck.passed) {
+          console.warn(`[IntegrationCheck] Re-check still has ${recheck.issues.length} issue(s) after auto-fix`);
+        } else {
+          console.log(`[IntegrationCheck] Re-check passed after auto-fix ✓`);
+        }
+      } catch (err) {
+        logger.error(err.message || 'Integration fix failed');
+        console.error('[IntegrationCheck] Auto-fix execution error:', err);
+      }
+    } catch (err) {
+      console.warn('[IntegrationCheck] Check failed to run:', err);
     }
   }
 
