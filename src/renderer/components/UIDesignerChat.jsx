@@ -322,7 +322,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
           // Resolve default import
           if (defaultName) {
             if (source === 'react' || source === 'react-dom') {
-              addDecl(defaultName, 'React');
+              // React and ReactDOM are already globals from CDN — skip
             } else if (source.includes('colors') || source.includes('theme')) {
               addDecl(defaultName, 'window.__designTokens || {}');
             } else {
