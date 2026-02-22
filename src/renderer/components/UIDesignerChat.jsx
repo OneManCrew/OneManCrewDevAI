@@ -432,7 +432,9 @@ try {
       }
     };
     const motion = new Proxy({}, _motionHandler);
+    window.motion = motion;
     const AnimatePresence = function(props) { return props.children || null; };
+    window.AnimatePresence = AnimatePresence;
 
     // Lucide icons — expose all as globals (UMD global is LucideReact)
     const lucideIcons = window.LucideReact || window.lucideReact || {};
