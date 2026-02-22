@@ -20,6 +20,7 @@ function getSettingsPath() {
 // Default settings
 const DEFAULT_SETTINGS = {
   contextWindow: 8192,
+  maxOutputTokens: 16384,
   provider: 'openai',
   apiKeys: {
     ollama: '',

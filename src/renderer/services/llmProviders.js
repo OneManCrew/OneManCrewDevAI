@@ -61,7 +61,8 @@ class OpenAICompatibleProvider {
     log.info('OpenAIProvider', 'chat() called', { baseUrl: this.baseUrl, model, agentId, messageCount: messages.length, hasApiKey: !!apiKey });
 
     try {
-      log.info('OpenAIProvider', 'Sending fetch request', { url: `${this.baseUrl}/chat/completions`, model, maxTokens: settings.contextWindow || 8192 });
+      const maxOut = settings.maxOutputTokens || 16384;
+      log.info('OpenAIProvider', 'Sending fetch request', { url: `${this.baseUrl}/chat/completions`, model, maxTokens: maxOut });
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -71,7 +72,7 @@ class OpenAICompatibleProvider {
         body: JSON.stringify({
           model,
           messages: sanitizeMessages(messages),
-          max_tokens: settings.contextWindow || 8192,
+          max_tokens: maxOut,
           stream: true,
         }),
       });
@@ -153,7 +154,8 @@ class AnthropicProvider {
     log.info('AnthropicProvider', 'Messages sanitized', { chatCount: chatMessages.length, hasSystem: !!systemMsg });
 
     try {
-      log.info('AnthropicProvider', 'Sending fetch request', { model, maxTokens: settings.contextWindow || 8192 });
+      const maxOut = settings.maxOutputTokens || 16384;
+      log.info('AnthropicProvider', 'Sending fetch request', { model, maxTokens: maxOut });
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -164,7 +166,7 @@ class AnthropicProvider {
         },
         body: JSON.stringify({
           model,
-          max_tokens: settings.contextWindow || 8192,
+          max_tokens: maxOut,
           system: systemMsg?.content || '',
           messages: chatMessages,
           stream: true,
@@ -262,7 +264,7 @@ class GeminiProvider {
             contents: chatMessages,
             systemInstruction: systemMsg ? { parts: [{ text: systemMsg.content }] } : undefined,
             generationConfig: {
-              maxOutputTokens: settings.contextWindow || 8192,
+              maxOutputTokens: settings.maxOutputTokens || 16384,
             },
           }),
         }

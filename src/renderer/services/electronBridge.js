@@ -7,6 +7,7 @@ const isElectron = () => typeof window !== 'undefined' && !!window.electronAPI;
 
 const MOCK_SETTINGS = {
   contextWindow: 8192,
+  maxOutputTokens: 16384,
   provider: 'openai',
   apiKeys: {
     ollama: '',
