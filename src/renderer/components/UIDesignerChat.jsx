@@ -184,7 +184,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         if (uiDirExists) {
           try {
             const entries = await api.readDir(uiPath);
-            existingComponents = (entries || []).filter(e => !e.isDirectory && (e.name.endsWith('.jsx') || e.name.endsWith('.tsx')));
+            existingComponents = (entries || []).filter(e => !e.isDirectory && /\.(jsx|tsx|html|css|js)$/.test(e.name));
           } catch (e) { /* ignore */ }
         }
 
@@ -454,7 +454,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         try {
           const entries = await api.readDir(uiPath);
           for (const entry of (entries || [])) {
-            if (!entry.isDirectory && (entry.name.endsWith('.jsx') || entry.name.endsWith('.tsx'))) {
+            if (!entry.isDirectory && /\.(jsx|tsx|html|css|js)$/.test(entry.name)) {
               await api.writeFile(entry.path, '').catch(() => {});
             }
           }

@@ -550,7 +550,7 @@ export function buildDLConversationMessages(chatHistory, currentPhase, contextDo
       contextBlock += `\n\n--- HLD.md (from Architect phase) ---\n${contextDocs.hld}\n--- End HLD.md ---`;
     }
     if (contextDocs.uiComponents) {
-      contextBlock += `\n\n--- UI Components (React + Tailwind, from UI Designer phase) ---\n${contextDocs.uiComponents}\n--- End UI Components ---`;
+      contextBlock += `\n\n--- UI Mockup (HTML + CSS + JS, from UI Designer phase) ---\n${contextDocs.uiComponents}\n--- End UI Mockup ---`;
     }
   }
 

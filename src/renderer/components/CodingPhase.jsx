@@ -464,9 +464,9 @@ export default function CodingPhase({ projectPath, settings, onUpdateSettings, o
           const uiExists = await api.exists(uiDir);
           if (uiExists) {
             const entries = await api.readDir(uiDir);
-            const jsxFiles = (entries || []).filter(e => !e.isDirectory && (e.name.endsWith('.jsx') || e.name.endsWith('.tsx')));
-            const contents = await Promise.all(jsxFiles.map(f => api.readFile(f.path)));
-            uiComponents = jsxFiles.map((f, i) => `// --- ${f.name} ---\n${contents[i] || ''}`).join('\n\n');
+            const uiFiles = (entries || []).filter(e => !e.isDirectory && /\.(jsx|tsx|html|css|js)$/.test(e.name));
+            const contents = await Promise.all(uiFiles.map(f => api.readFile(f.path)));
+            uiComponents = uiFiles.map((f, i) => `// --- ${f.name} ---\n${contents[i] || ''}`).join('\n\n');
           }
         } catch (e) { /* ignore */ }
 

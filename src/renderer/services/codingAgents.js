@@ -92,7 +92,7 @@ You are part of a team of specialist coding agents working together to implement
 ${projectContext.projectName ? `**Project:** ${projectContext.projectName}` : ''}
 ${projectContext.srs ? `\n### Software Requirements Specification (SRS)\n${projectContext.srs}` : ''}
 ${projectContext.hld ? `\n### High-Level Design (HLD)\n${projectContext.hld}` : ''}
-${projectContext.uiComponents ? `\n### UI Components (React + Tailwind)\n${projectContext.uiComponents}` : ''}
+${projectContext.uiComponents ? `\n### UI Mockup (HTML + CSS + JS)\n${projectContext.uiComponents}` : ''}
 ${projectContext.contextSummary ? `\n### CURRENT PROJECT STATE\n${projectContext.contextSummary}` : ''}
 
 ## Your Current Task
