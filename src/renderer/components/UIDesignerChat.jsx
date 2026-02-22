@@ -277,19 +277,65 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         } catch (e) { /* no tokens */ }
       }
 
-      // Strip import/export statements so code works with CDN globals.
-      // Replace known imports with global references.
-      function prepareForBrowser(code, componentName) {
+      // Strip import/export statements and inject global references so code
+      // works inside Babel standalone <script type="text/babel"> blocks.
+      function prepareForBrowser(code) {
         let c = code;
+        const preambleLines = [];
+
+        // Extract named imports and map to globals before removing import lines
+        const importRe = /^import\s+(.+?)\s+from\s+['"](.*?)['"]\s*;?\s*$/gm;
+        let m;
+        while ((m = importRe.exec(c)) !== null) {
+          const specifier = m[1];
+          const source = m[2];
+
+          // Named imports: import { A, B } from '...'
+          const namedMatch = specifier.match(/\{([^}]+)\}/);
+          if (namedMatch) {
+            const names = namedMatch[1].split(',').map(s => s.trim()).filter(Boolean);
+            if (source.includes('lucide-react') || source.includes('lucide')) {
+              names.forEach(n => preambleLines.push(`const ${n} = (window.LucideReact && window.LucideReact.${n}) || function(p){return React.createElement("span",p,"[${n}]")};`));
+            } else if (source.includes('framer-motion')) {
+              names.forEach(n => preambleLines.push(`const ${n} = window.${n};`));
+            } else if (source === 'react' || source === 'react-dom' || source === 'react-dom/client') {
+              names.forEach(n => preambleLines.push(`const ${n} = React.${n} || window.${n};`));
+            }
+          }
+
+          // Default import: import X from '...'
+          const defaultMatch = specifier.match(/^([A-Za-z_$][A-Za-z0-9_$]*)$/);
+          if (defaultMatch) {
+            const name = defaultMatch[1];
+            if (source.includes('colors') || source.includes('theme')) {
+              preambleLines.push(`const ${name} = window.__designTokens || {};`);
+            } else {
+              preambleLines.push(`const ${name} = window.${name};`);
+            }
+          }
+
+          // Mixed: import X, { A, B } from '...'
+          const mixedMatch = specifier.match(/^([A-Za-z_$][A-Za-z0-9_$]*)\s*,\s*\{([^}]+)\}/);
+          if (mixedMatch) {
+            const defName = mixedMatch[1];
+            const names = mixedMatch[2].split(',').map(s => s.trim()).filter(Boolean);
+            if (source.includes('react')) {
+              preambleLines.push(`const ${defName} = React;`);
+              names.forEach(n => preambleLines.push(`const ${n} = React.${n};`));
+            }
+          }
+        }
+
         // Remove all import lines
         c = c.replace(/^import\s+.*?['"]\s*;?\s*$/gm, '');
-        // Replace "export default function X" → "function X"
-        c = c.replace(/export\s+default\s+function\s+/g, 'function ');
+        // Replace "export default function X" → "window.X = function X"
+        c = c.replace(/export\s+default\s+function\s+(\w+)/g, 'window.$1 = function $1');
         // Replace "export default X" at end
-        c = c.replace(/export\s+default\s+\w+\s*;?\s*$/gm, '');
+        c = c.replace(/export\s+default\s+(\w+)\s*;?\s*$/gm, 'window.$1 = $1;');
         // Replace "export function" → "function"
         c = c.replace(/export\s+function\s+/g, 'function ');
-        return c;
+
+        return preambleLines.join('\n') + '\n' + c;
       }
 
       // Find the main entry component (AppShell or first non-index file)
@@ -349,12 +395,29 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     const motion = new Proxy({}, _motionHandler);
     const AnimatePresence = function(props) { return props.children || null; };
 
-    // Lucide icons — expose all as globals
-    const lucideIcons = window.lucideReact || {};
+    // Lucide icons — expose all as globals (UMD global is LucideReact)
+    const lucideIcons = window.LucideReact || window.lucideReact || {};
     Object.keys(lucideIcons).forEach(function(k) { if (!window[k]) window[k] = lucideIcons[k]; });
+    // Fallback: any undefined icon becomes an empty SVG placeholder
+    const _iconFallback = new Proxy({}, { get(_, name) {
+      if (window[name]) return window[name];
+      return function FallbackIcon(props) {
+        return React.createElement('svg', Object.assign({
+          xmlns:'http://www.w3.org/2000/svg', width:24, height:24,
+          viewBox:'0 0 24 24', fill:'none', stroke:'currentColor',
+          strokeWidth:2, strokeLinecap:'round', strokeLinejoin:'round'
+        }, { className: props.className, style: props.style, width: props.size || props.width || 24, height: props.size || props.height || 24 }),
+          React.createElement('circle', {cx:'12',cy:'12',r:'10'}),
+          React.createElement('line', {x1:'12',y1:'8',x2:'12',y2:'12'}),
+          React.createElement('line', {x1:'12',y1:'16',x2:'12.01',y2:'16'})
+        );
+      };
+    }});
+    window._iconFallback = _iconFallback;
 
     // Design tokens
     const colors = ${designTokensJson};
+    window.__designTokens = colors;
   <\/script>
 
   ${componentScripts}
@@ -362,7 +425,8 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   <script type="text/babel">
     try {
       const root = ReactDOM.createRoot(document.getElementById('root'));
-      root.render(React.createElement(${mainName}));
+      const MainApp = window.${mainName} || ${mainName};
+      root.render(React.createElement(MainApp));
     } catch (err) {
       document.getElementById('preview-error').style.display = 'block';
       document.getElementById('preview-error').textContent = 'Render error: ' + err.message + '\\n\\n' + err.stack;
