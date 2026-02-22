@@ -621,7 +621,16 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
                     I've reviewed all project documents. I'll build a detailed work plan with prioritized tasks.
                   </p>
                   <button
-                    onClick={() => sendToLLM('Start working. Introduce yourself and begin reviewing the project documents to create a work plan.', phase, { showUserMsg: false })}
+                    onClick={() => {
+                      // Skip discovery — go straight to generation if we have all context
+                      if (contextDocs && (contextDocs.srs || contextDocs.hld)) {
+                        setPhase(DL_PHASES.GENERATION);
+                        addMessage('system', 'All project documents loaded. Generating work plan...');
+                        setTimeout(() => triggerGeneration(), 500);
+                      } else {
+                        sendToLLM('Start working. Review the project documents and create a work plan.', phase, { showUserMsg: false });
+                      }
+                    }}
                     disabled={isStreaming}
                     className="px-5 py-2.5 bg-emerald-500 text-white rounded-xl text-sm font-semibold hover:bg-emerald-600 transition-all duration-200 shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/30 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                   >
