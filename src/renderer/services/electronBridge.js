@@ -106,37 +106,55 @@ const mockAPI = {
 
 const rawApi = isElectron() ? window.electronAPI : mockAPI;
 
-// ─── Logging proxy: logs every API call to console ──────────────────────────
+// ─── Logging wrapper: logs every API call to console ────────────────────────
+// Cannot use Proxy because Electron's contextBridge freezes properties.
+// Instead, build a plain object that delegates to rawApi with logging.
 const SKIP_LOG = new Set(['isWindowFocused']); // too noisy
+// onShellOutput is synchronous (returns unsubscribe fn), must not be wrapped as async
+const SYNC_FNS = new Set(['onShellOutput']);
 
-const api = new Proxy(rawApi, {
-  get(target, prop) {
-    const original = target[prop];
-    if (typeof original !== 'function' || SKIP_LOG.has(prop)) return original;
-    return async function (...args) {
-      const argSummary = args.map(a => {
-        if (typeof a === 'string') return a.length > 120 ? a.substring(0, 120) + '...' : a;
-        return JSON.stringify(a)?.substring(0, 80);
-      });
-      console.log(`🔧 [api.${prop}] called`, argSummary);
-      try {
-        const result = await original.apply(target, args);
-        const resultSummary = typeof result === 'string'
-          ? `string(${result.length})`
-          : result === true ? 'true'
-          : result === false ? 'false'
-          : result === null || result === undefined ? 'null'
-          : Array.isArray(result) ? `array(${result.length})`
-          : typeof result === 'object' ? `object(${Object.keys(result).length} keys)`
-          : String(result);
-        console.log(`✅ [api.${prop}] result:`, resultSummary);
-        return result;
-      } catch (err) {
-        console.error(`❌ [api.${prop}] error:`, err.message);
-        throw err;
-      }
-    };
-  },
-});
+function _summarizeResult(result) {
+  if (typeof result === 'string') return `string(${result.length})`;
+  if (result === true) return 'true';
+  if (result === false) return 'false';
+  if (result === null || result === undefined) return 'null';
+  if (Array.isArray(result)) return `array(${result.length})`;
+  if (typeof result === 'object') { try { return `object(${Object.keys(result).length} keys)`; } catch { return 'object'; } }
+  return String(result);
+}
+
+function _wrapAsync(name, fn) {
+  return async function (...args) {
+    const argSummary = args.map(a => {
+      if (typeof a === 'string') return a.length > 120 ? a.substring(0, 120) + '...' : a;
+      try { return JSON.stringify(a)?.substring(0, 80); } catch { return '[unserializable]'; }
+    });
+    console.log(`🔧 [api.${name}] called`, argSummary);
+    try {
+      const result = await fn(...args);
+      console.log(`✅ [api.${name}] result:`, _summarizeResult(result));
+      return result;
+    } catch (err) {
+      console.error(`❌ [api.${name}] error:`, err.message);
+      throw err;
+    }
+  };
+}
+
+// Enumerate all properties — works on both plain objects and frozen contextBridge objects
+const allKeys = new Set([
+  ...Object.keys(rawApi),
+  ...Object.getOwnPropertyNames(rawApi),
+]);
+
+const api = {};
+for (const key of allKeys) {
+  const val = rawApi[key];
+  if (typeof val !== 'function' || SKIP_LOG.has(key) || SYNC_FNS.has(key)) {
+    api[key] = val;
+  } else {
+    api[key] = _wrapAsync(key, val);
+  }
+}
 
 export default api;
