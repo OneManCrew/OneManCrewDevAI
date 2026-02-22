@@ -419,6 +419,26 @@ export default function CodingPhase({ projectPath, settings, onUpdateSettings, o
     }
   }, [statusFilePath]);
 
+  // ─── Reset handler ──────────────────────────────────────────────────────
+  const handleReset = async () => {
+    if (isRunning) return;
+    if (!confirm('Reset Code Implementation? This will clear all task progress and generated file records. Source files already written to disk will NOT be deleted.')) return;
+    try {
+      if (statusFilePath) await api.writeFile(statusFilePath, '');
+      const ctxPath = projectPath.replace(/[\\/]$/, '') + '/docs/context_summary.json';
+      try { await api.writeFile(ctxPath, ''); } catch (e) { /* ignore */ }
+    } catch (e) { /* ignore */ }
+    setTasks([]);
+    setBatches([]);
+    setLogMessages([]);
+    setAllFiles([]);
+    setIsComplete(false);
+    setIsRunning(false);
+    setError(null);
+    setWorkplan(null);
+    setProjectContext(null);
+  };
+
   // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -674,6 +694,18 @@ export default function CodingPhase({ projectPath, settings, onUpdateSettings, o
               onUpdateSettings(newSettings);
             }}
           />
+
+          {/* Reset button */}
+          <button
+            onClick={handleReset}
+            disabled={isRunning}
+            title="Reset — clear all task progress"
+            className="p-1.5 text-gray-600 hover:text-red-400 rounded-md hover:bg-red-500/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
 
           {!isRunning && !isComplete && tasks.length > 0 && (
             <button onClick={startExecution}
