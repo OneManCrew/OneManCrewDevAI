@@ -285,7 +285,8 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
     if (showUserMsg) addMessage('user', userMessage);
 
     const allMessages = [...messagesRef.current];
-    if (showUserMsg) allMessages.push({ role: 'user', content: userMessage });
+    // Always include the user message in the LLM conversation, even if not shown in UI
+    allMessages.push({ role: 'user', content: userMessage });
     const conversationMessages = buildDLConversationMessages(allMessages, currentPhase, contextDocs);
 
     setIsStreaming(true);
