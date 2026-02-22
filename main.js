@@ -76,6 +76,7 @@ class CommandQueue {
     if (this.running || this.queue.length === 0) return;
     this.running = true;
 
+    const COMMAND_TIMEOUT_MS = 300_000; // 5 minutes
     const { command, cwd, shell, resolve, reject } = this.queue.shift();
     const isWin = process.platform === 'win32';
     const shellBin = shell || (isWin ? 'powershell.exe' : '/bin/bash');
@@ -85,7 +86,6 @@ class CommandQueue {
       env: { ...process.env },
       shell: shellBin,
       windowsHide: true,
-      timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
     };
 
@@ -94,29 +94,51 @@ class CommandQueue {
       mainWindow.webContents.send('shell:output', { type: 'start', command, cwd: cwd || '', queued: true });
     }
 
-    exec(command, execOpts, (error, stdout, stderr) => {
-      const code = error ? (error.killed ? -1 : error.code ?? 1) : 0;
-      const killed = !!(error && error.killed);
+    let timedOut = false;
+    const child = exec(command, execOpts, (error, stdout, stderr) => {
+      clearTimeout(timeoutHandle);
+
+      const code = timedOut ? -1 : (error ? (error.killed ? -1 : error.code ?? 1) : 0);
+      const killed = timedOut || !!(error && error.killed);
+      const stderrOut = timedOut
+        ? `${stderr || ''}\\nCommand timed out after ${COMMAND_TIMEOUT_MS / 1000}s and was killed.`
+        : (stderr || '');
 
       // Notify renderer that the queued command finished
       if (mainWindow && !mainWindow.isDestroyed()) {
         if (stdout) {
           mainWindow.webContents.send('shell:output', { type: 'stdout', command, data: stdout, queued: true });
         }
-        if (stderr) {
-          mainWindow.webContents.send('shell:output', { type: 'stderr', command, data: stderr, queued: true });
+        if (stderrOut) {
+          mainWindow.webContents.send('shell:output', { type: 'stderr', command, data: stderrOut, queued: true });
         }
         mainWindow.webContents.send('shell:output', { type: 'exit', command, code, killed, queued: true });
       }
 
       // Always resolve (never reject) so the queue keeps moving.
       // The caller can inspect `code` to detect failures.
-      resolve({ code, stdout: stdout || '', stderr: stderr || '', killed });
+      resolve({ code, stdout: stdout || '', stderr: stderrOut, killed });
 
       // Move to next task
       this.running = false;
       this._processNext();
     });
+
+    // Kill the process tree if the command exceeds the timeout
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      console.warn(`[CommandQueue] Timeout (${COMMAND_TIMEOUT_MS / 1000}s) — killing: ${command}`);
+      try {
+        if (isWin) {
+          // On Windows, kill the entire process tree via taskkill
+          exec(`taskkill /pid ${child.pid} /T /F`, { windowsHide: true }, () => {});
+        } else {
+          child.kill('SIGKILL');
+        }
+      } catch (e) {
+        console.warn('[CommandQueue] Failed to kill timed-out process:', e);
+      }
+    }, COMMAND_TIMEOUT_MS);
   }
 }
 

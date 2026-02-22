@@ -91,7 +91,7 @@ ${projectContext.projectName ? `**Project:** ${projectContext.projectName}` : ''
 ${projectContext.srs ? `\n### Software Requirements Specification (SRS)\n${projectContext.srs}` : ''}
 ${projectContext.hld ? `\n### High-Level Design (HLD)\n${projectContext.hld}` : ''}
 ${projectContext.uiComponents ? `\n### UI Components (React + Tailwind)\n${projectContext.uiComponents}` : ''}
-${projectContext.contextSummary ? `\n### Shared Context (from completed tasks)\n${projectContext.contextSummary}` : ''}
+${projectContext.contextSummary ? `\n### CURRENT PROJECT STATE\n${projectContext.contextSummary}` : ''}
 
 ## Your Current Task
 **Task ID:** ${task.id}
@@ -441,6 +441,8 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
   const allFiles = [];
   const allCommands = [];
   let syntaxErrors = []; // Collects syntax errors per turn for auto-retry
+  let syntaxRetryCount = 0;
+  const MAX_SYNTAX_RETRIES = 2;
 
   // Incremental extractors for real-time processing
   const fileExtractor = new IncrementalFileExtractor();
@@ -528,12 +530,22 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
       enqueueProcessing(allOutput);
       await drainQueue();
 
-      // Check for syntax errors — if any, inject fix prompt and re-run
+      // Check for syntax errors — if any, inject fix prompt and re-run (up to MAX_SYNTAX_RETRIES)
       if (syntaxErrors.length > 0) {
+        syntaxRetryCount++;
         const errorSummary = syntaxErrors.map(e =>
           `- **${e.file.path}**: ${e.error}`
         ).join('\n');
-        const fixPrompt = `The code you just wrote has syntax errors. Please fix them and output the full corrected file(s) again using \`\`\`file:...\`\`\` blocks.\n\nSyntax errors found:\n${errorSummary}`;
+
+        if (syntaxRetryCount > MAX_SYNTAX_RETRIES) {
+          // Exhausted retries — report error and stop
+          const errMsg = `Syntax errors remain after ${MAX_SYNTAX_RETRIES} fix attempts:\n${errorSummary}`;
+          console.warn(`[codingAgents] ${errMsg}`);
+          if (onError) onError(new Error(errMsg));
+          return { rawOutput: allOutput };
+        }
+
+        const fixPrompt = `The file you just wrote has a syntax error: ${errorSummary}\n\nPlease fix the code and provide the full corrected file content using \`\`\`file:...\`\`\` blocks. (Attempt ${syntaxRetryCount}/${MAX_SYNTAX_RETRIES})`;
         messages.push({ role: 'user', content: fixPrompt });
         if (onSyntaxRetry) onSyntaxRetry(syntaxErrors);
         syntaxErrors = []; // Reset for next turn
@@ -960,6 +972,37 @@ export class CodingOrchestrator {
   }
 
   /**
+   * Asks the LLM for a concise 2-sentence summary of what the task produced.
+   * Focuses on files created and the API/Props interfaces they expose.
+   */
+  async _generateLLMSummary(task, files) {
+    if (files.length === 0) return '';
+
+    // Build a compact file listing (path + first few export lines)
+    const fileSnippets = files.slice(0, 8).map(f => {
+      const exportLines = (f.content || '').split('\n')
+        .filter(l => /^export\s/.test(l.trim()))
+        .slice(0, 5)
+        .join('\n');
+      return `**${f.path}**\n${exportLines || '(no exports found)'}`;
+    }).join('\n\n');
+
+    const summaryMessages = [
+      { role: 'system', content: 'You are a technical documentation assistant. Respond with EXACTLY 2 sentences, nothing else. No markdown, no bullet points.' },
+      { role: 'user', content: `A coding agent just completed the task "${task.title}". Here are the files it created and their exports:\n\n${fileSnippets}\n\nSummarize in exactly 2 sentences: Which files were created and what API/Props/interfaces do they provide?` },
+    ];
+
+    try {
+      const { rawOutput } = await _runLLMCall(summaryMessages, this.settings, {});
+      // Take only the first 2 sentences (safety trim)
+      const sentences = rawOutput.trim().split(/(?<=[.!?])\s+/).slice(0, 2).join(' ');
+      return sentences;
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
    * Updates docs/context_summary.json with newly created files, exports, and technologies.
    * Merges with existing summary so all agents share cumulative knowledge.
    */
@@ -999,8 +1042,16 @@ export class CodingOrchestrator {
       const techSet = new Set([...summary.technologies, ...newTech]);
       summary.technologies = [...techSet];
 
-      // Build natural-language summary
-      const taskSummary = _buildTaskSummary(task, files, newExports, newTech, task.commands);
+      // Build deterministic summary as fallback
+      const deterministicSummary = _buildTaskSummary(task, files, newExports, newTech, task.commands);
+
+      // Ask LLM for a focused 2-sentence summary about files and their API/Props
+      let llmSummary = '';
+      try {
+        llmSummary = await this._generateLLMSummary(task, files);
+      } catch (e) {
+        console.warn('[CodingOrchestrator] LLM summary failed, using deterministic:', e);
+      }
 
       // Track completed task
       summary.completedTasks.push({
@@ -1008,7 +1059,7 @@ export class CodingOrchestrator {
         title: task.title,
         agent: task.assignedAgent,
         filesWritten: files.map(f => f.path),
-        summary: taskSummary,
+        summary: llmSummary || deterministicSummary,
       });
 
       summary.updatedAt = new Date().toISOString();
