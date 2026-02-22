@@ -37,6 +37,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
   const [view, setView] = useState(VIEW.CHAT);
   const [tokenCount, setTokenCount] = useState(0);
   const [docsReady, setDocsReady] = useState(false);
+  const [docsVersion, setDocsVersion] = useState(0);
   const [resumeChecked, setResumeChecked] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -229,6 +230,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
               const { saved, errors } = await saveArchitectDocs(projectPath, docs);
               setPhase(PHASES.DONE);
               setDocsReady(true);
+              setDocsVersion(v => v + 1);
               setView(VIEW.SPLIT);
               if (saved.length > 0) {
                 addMessage('system', `[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
@@ -245,7 +247,8 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             const docs = parseArchitectOutput(fullResponse);
             if (docs.srs || docs.hld) {
               const { saved, errors } = await saveArchitectDocs(projectPath, docs);
-              setDocsReady(true); // trigger re-render
+              setDocsReady(true);
+              setDocsVersion(v => v + 1); // force DocumentPanel remount + reload from disk
               if (saved.length > 0) {
                 addMessage('system', `[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
               }
@@ -661,7 +664,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
         {showDocs && (
           <div className={showChat ? 'w-1/2' : 'w-full'}>
             <DocumentPanel
-              key={docsReady ? 'loaded' : 'empty'}
+              key={`docs-${docsVersion}`}
               projectPath={projectPath}
               onRequestChange={handleDocRequestChange}
               onNext={onNext}

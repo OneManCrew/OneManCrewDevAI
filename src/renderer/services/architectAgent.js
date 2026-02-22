@@ -313,6 +313,7 @@ export function buildConversationMessages(chatHistory, currentPhase, projectPath
 export function parseArchitectOutput(text) {
   const result = { srs: null, hld: null };
 
+  // Primary: extract from ```srs / ```hld fences
   const srsMatch = text.match(/```srs\s*\n([\s\S]*?)```/);
   if (srsMatch) {
     result.srs = srsMatch[1].trim();
@@ -321,6 +322,29 @@ export function parseArchitectOutput(text) {
   const hldMatch = text.match(/```hld\s*\n([\s\S]*?)```/);
   if (hldMatch) {
     result.hld = hldMatch[1].trim();
+  }
+
+  // Fallback: if no fences found, detect by heading and extract full content.
+  // This handles cases where the LLM outputs the document as plain markdown
+  // without wrapping it in ```hld or ```srs fences.
+  if (!result.srs) {
+    const srsHeadingMatch = text.match(/(#\s+Software Requirements Specification[\s\S]*)/i);
+    if (srsHeadingMatch) {
+      let content = srsHeadingMatch[1].trim();
+      // If both SRS and HLD are in the same response (unfenced), split at HLD heading
+      const hldSplit = content.match(/^([\s\S]*?)\n(?=#\s+High-Level Design)/m);
+      if (hldSplit) content = hldSplit[1].trim();
+      if (content.length > 200) result.srs = content; // Only accept substantial content
+    }
+  }
+
+  if (!result.hld) {
+    const hldHeadingMatch = text.match(/(#\s+High-Level Design[\s\S]*)/i);
+    if (hldHeadingMatch) {
+      let content = hldHeadingMatch[1].trim();
+      // If both are in the same response, HLD is everything after its heading
+      if (content.length > 200) result.hld = content; // Only accept substantial content
+    }
   }
 
   return result;
