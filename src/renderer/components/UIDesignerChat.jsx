@@ -279,49 +279,72 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
 
       // Strip import/export statements and inject global references so code
       // works inside Babel standalone <script type="text/babel"> blocks.
-      function prepareForBrowser(code) {
-        let c = code;
-        const preambleLines = [];
+      // Known React built-in APIs — anything else imported from 'react' is NOT a React API
+      const REACT_BUILTINS = new Set([
+        'useState','useEffect','useRef','useCallback','useMemo','useContext',
+        'useReducer','useLayoutEffect','useImperativeHandle','useDebugValue',
+        'useDeferredValue','useTransition','useId','useSyncExternalStore',
+        'createContext','createElement','cloneElement','isValidElement',
+        'Children','Fragment','Suspense','lazy','memo','forwardRef',
+        'createRef','Component','PureComponent','StrictMode','startTransition',
+      ]);
 
-        // Extract named imports and map to globals before removing import lines
+      function prepareForBrowser(code, fileName) {
+        let c = code;
+        const declared = new Set();
+        const preambleLines = [];
+        console.log(`🎨 [Preview:prepare] ${fileName} — imports:`);
+
+        function addDecl(name, expr) {
+          if (declared.has(name)) return;
+          declared.add(name);
+          preambleLines.push(`const ${name} = ${expr};`);
+          console.log(`🎨 [Preview:prepare]   ${name} = ${expr}`);
+        }
+
+        // Parse each import line
         const importRe = /^import\s+(.+?)\s+from\s+['"](.*?)['"]\s*;?\s*$/gm;
         let m;
         while ((m = importRe.exec(c)) !== null) {
           const specifier = m[1];
           const source = m[2];
 
-          // Named imports: import { A, B } from '...'
+          // Extract default name (before comma or alone)
+          const defMatch = specifier.match(/^([A-Za-z_$]\w*)(?:\s*,|\s*$)/);
+          // Extract named imports inside { }
           const namedMatch = specifier.match(/\{([^}]+)\}/);
-          if (namedMatch) {
-            const names = namedMatch[1].split(',').map(s => s.trim()).filter(Boolean);
-            if (source.includes('lucide-react') || source.includes('lucide')) {
-              names.forEach(n => preambleLines.push(`const ${n} = (window.LucideReact && window.LucideReact.${n}) || function(p){return React.createElement("span",p,"[${n}]")};`));
-            } else if (source.includes('framer-motion')) {
-              names.forEach(n => preambleLines.push(`const ${n} = window.${n};`));
-            } else if (source === 'react' || source === 'react-dom' || source === 'react-dom/client') {
-              names.forEach(n => preambleLines.push(`const ${n} = React.${n} || window.${n};`));
-            }
-          }
 
-          // Default import: import X from '...'
-          const defaultMatch = specifier.match(/^([A-Za-z_$][A-Za-z0-9_$]*)$/);
-          if (defaultMatch) {
-            const name = defaultMatch[1];
-            if (source.includes('colors') || source.includes('theme')) {
-              preambleLines.push(`const ${name} = window.__designTokens || {};`);
+          const defaultName = defMatch ? defMatch[1] : null;
+          const namedNames = namedMatch
+            ? namedMatch[1].split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+
+          // Resolve default import
+          if (defaultName) {
+            if (source === 'react' || source === 'react-dom') {
+              addDecl(defaultName, 'React');
+            } else if (source.includes('colors') || source.includes('theme')) {
+              addDecl(defaultName, 'window.__designTokens || {}');
             } else {
-              preambleLines.push(`const ${name} = window.${name};`);
+              addDecl(defaultName, `window.${defaultName}`);
             }
           }
 
-          // Mixed: import X, { A, B } from '...'
-          const mixedMatch = specifier.match(/^([A-Za-z_$][A-Za-z0-9_$]*)\s*,\s*\{([^}]+)\}/);
-          if (mixedMatch) {
-            const defName = mixedMatch[1];
-            const names = mixedMatch[2].split(',').map(s => s.trim()).filter(Boolean);
-            if (source.includes('react')) {
-              preambleLines.push(`const ${defName} = React;`);
-              names.forEach(n => preambleLines.push(`const ${n} = React.${n};`));
+          // Resolve named imports
+          for (const n of namedNames) {
+            if (source.includes('lucide-react') || source.includes('lucide')) {
+              addDecl(n, `(window.LucideReact && window.LucideReact.${n}) || function(p){return React.createElement("span",{className:p&&p.className},"[${n}]")}`);
+            } else if (source.includes('framer-motion')) {
+              addDecl(n, `window.${n}`);
+            } else if (source === 'react' || source === 'react-dom' || source === 'react-dom/client') {
+              if (REACT_BUILTINS.has(n)) {
+                addDecl(n, `React.${n}`);
+              } else {
+                // Not a React built-in — look on window (e.g. motion mistakenly imported from react)
+                addDecl(n, `window.${n}`);
+              }
+            } else {
+              addDecl(n, `window.${n}`);
             }
           }
         }
@@ -335,7 +358,9 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         // Replace "export function" → "function"
         c = c.replace(/export\s+function\s+/g, 'function ');
 
-        return preambleLines.join('\n') + '\n' + c;
+        const result = preambleLines.join('\n') + '\n' + c;
+        console.log(`🎨 [Preview:prepare] ${fileName} — ${preambleLines.length} declarations, ${result.length} chars`);
+        return result;
       }
 
       // Find the main entry component (AppShell or first non-index file)
@@ -445,6 +470,9 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
 </html>`;
 
       const previewPath = base + '/docs/ui/_preview.html';
+      console.log(`🎨 [Preview] Writing preview HTML (${previewHtml.length} chars) to ${previewPath}`);
+      // Also save a debug copy
+      await api.writeFile(base + '/docs/ui/_preview_debug.html', previewHtml);
       await api.writeFile(previewPath, previewHtml);
       await api.openPreview(previewPath);
     } catch (err) {
