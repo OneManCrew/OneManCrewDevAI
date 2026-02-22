@@ -119,6 +119,15 @@ The command runs in the project root directory. Use this for:
 - Running build commands
 - Any shell operation needed for the task
 
+### 3. Set Environment Variable
+Add or update a variable in the project's \`.env\` file. Use this when the task requires environment configuration (database URLs, API keys, secrets, ports, etc.).
+\`\`\`set-env-variable
+{"key": "DATABASE_URL", "value": "postgresql://localhost:5432/mydb", "description": "PostgreSQL connection string"}
+\`\`\`
+- If the variable already exists in \`.env\`, it will be updated. Otherwise it will be appended.
+- For **secrets or credentials** the user must provide (API keys, passwords), set value to \`"ASK_USER"\` and the system will prompt the user to enter it.
+- For **generated values** (ports, default URLs, app names), set the value directly.
+
 ### Rules:
 1. Output EVERY file needed for this task as a separate \`\`\`file:...\`\`\` block.
 2. Each file must be COMPLETE — no placeholders, no "// TODO", no "..." abbreviations.
@@ -141,7 +150,7 @@ The "options" array is optional — include it only if there are specific choice
 
 Only use \`\`\`need-input\`\`\` when you are truly blocked. Do NOT use it for trivial decisions you can make yourself.
 
-Begin implementing the task now. Use \`\`\`file:...\`\`\`, \`\`\`exec-command\`\`\`, or \`\`\`need-input\`\`\` blocks.`;
+Begin implementing the task now. Use \`\`\`file:...\`\`\`, \`\`\`exec-command\`\`\`, \`\`\`set-env-variable\`\`\`, or \`\`\`need-input\`\`\` blocks.`;
 }
 
 // ─── Task Assignment Logic ──────────────────────────────────────────────────────
@@ -351,6 +360,49 @@ export class IncrementalCommandExtractor {
   }
 }
 
+// ─── Environment Variable Extraction from LLM Output ─────────────────────────
+
+/**
+ * Extracts ```set-env-variable blocks from LLM output.
+ * Returns array of { key, value, description }.
+ */
+export function extractEnvVarsFromOutput(output) {
+  const envVars = [];
+  const regex = /```set-env-variable\s*\n([\s\S]*?)```/g;
+  let match;
+  while ((match = regex.exec(output)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1].trim());
+      if (parsed.key) {
+        envVars.push({
+          key: parsed.key,
+          value: parsed.value ?? '',
+          description: parsed.description || '',
+        });
+      }
+    } catch {
+      // Skip malformed blocks
+    }
+  }
+  return envVars;
+}
+
+/**
+ * Incremental env var extractor — same pattern as IncrementalFileExtractor.
+ */
+export class IncrementalEnvVarExtractor {
+  constructor() {
+    this._processedCount = 0;
+  }
+
+  update(fullOutput) {
+    const all = extractEnvVarsFromOutput(fullOutput);
+    const newVars = all.slice(this._processedCount);
+    this._processedCount = all.length;
+    return newVars;
+  }
+}
+
 // ─── Post-Write Syntax Validation ────────────────────────────────────────────
 
 const SYNTAX_CHECK_EXTENSIONS = ['.js', '.jsx', '.mjs', '.cjs'];
@@ -481,7 +533,7 @@ Does this code fulfill the task requirements? Respond with JSON only.` },
  * @param {string} projectPath — root path where files are saved (files go to projectPath/src/...)
  */
 export async function executeTask(task, projectContext, settings, callbacks = {}, projectPath = '') {
-  const { onToken, onProgress, onComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onCommandQueued, onSyntaxError, onSyntaxRetry, onQualityGate } = callbacks;
+  const { onToken, onProgress, onComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onCommandQueued, onSyntaxError, onSyntaxRetry, onQualityGate, onEnvVarSet } = callbacks;
   const agentType = task.assignedAgent || AGENT_TYPES.BACKEND;
 
   const systemPrompt = buildAgentSystemPrompt(agentType, task, projectContext);
@@ -501,9 +553,12 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
   let qualityRetryCount = 0;
   const MAX_QUALITY_RETRIES = 2;
 
+  const allEnvVars = [];
+
   // Incremental extractors for real-time processing
   const fileExtractor = new IncrementalFileExtractor();
   const cmdExtractor = new IncrementalCommandExtractor();
+  const envExtractor = new IncrementalEnvVarExtractor();
 
   const srcBase = projectPath ? projectPath.replace(/[\\/]$/, '') + '/src' : '';
 
@@ -563,6 +618,31 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
       } catch (e) {
         console.warn(`[codingAgents] Command failed: ${cmd.command}`, e);
         if (onCommandExecuted) onCommandExecuted(cmd, { code: -1, stdout: '', stderr: e.message, killed: false });
+      }
+    }
+
+    // Process new env variable requests
+    const newEnvVars = envExtractor.update(fullOutput);
+    for (const envVar of newEnvVars) {
+      try {
+        let finalValue = envVar.value;
+
+        // If value is ASK_USER, prompt the user for the value
+        if (finalValue === 'ASK_USER' && onNeedInput) {
+          const userValue = await onNeedInput(
+            `The agent needs an environment variable:\n\n**${envVar.key}** — ${envVar.description || 'No description'}\n\nPlease enter the value:`,
+            null
+          );
+          finalValue = userValue || '';
+        }
+
+        if (projectPath && envVar.key) {
+          await api.setEnvVar(projectPath, envVar.key, finalValue);
+          allEnvVars.push({ key: envVar.key, value: finalValue === 'ASK_USER' ? '(user-provided)' : finalValue, description: envVar.description });
+          if (onEnvVarSet) onEnvVarSet(envVar.key, finalValue, envVar.description);
+        }
+      } catch (e) {
+        console.warn(`[codingAgents] Failed to set env var ${envVar.key}:`, e);
       }
     }
   }
@@ -780,9 +860,14 @@ export class TaskLogger {
   }
 
   qualityGate({ passed, feedback, attempt }) {
-    this._flush(`[${this._ts()}] 🔍 QUALITY GATE (attempt ${attempt})`);
+    this._flush(`[${this._ts()}] [VALIDATION] Checking task alignment... (attempt ${attempt})`);
     this._flush(`   Result: ${passed ? 'PASSED ✅' : 'FAILED ❌'}`);
     if (feedback) this._flush(`   Feedback: ${feedback}`);
+  }
+
+  envVarSet(key, value, description) {
+    const masked = /key|secret|password|token/i.test(key) ? '****' : value;
+    this._flush(`[${this._ts()}] 🔑 ENV SET: ${key}=${masked}${description ? ` (${description})` : ''}`);
   }
 
   blocked(blockedBy) {
@@ -1107,6 +1192,10 @@ export class CodingOrchestrator {
         },
         onQualityGate: (result) => {
           logger.qualityGate(result);
+          this.onTaskUpdate(task, this.executionPlan);
+        },
+        onEnvVarSet: (key, value, description) => {
+          logger.envVarSet(key, value, description);
           this.onTaskUpdate(task, this.executionPlan);
         },
       }, this.projectPath);

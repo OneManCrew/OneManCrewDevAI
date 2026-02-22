@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openPreviewUrl: (url) => ipcRenderer.invoke('preview:openUrl', url),
   reloadPreview: () => ipcRenderer.invoke('preview:reload'),
   closePreview: () => ipcRenderer.invoke('preview:close'),
+  detectViteServer: () => ipcRenderer.invoke('preview:detectVite'),
+
+  // .env management
+  readEnv: (projectPath) => ipcRenderer.invoke('env:read', projectPath),
+  setEnvVar: (projectPath, key, value) => ipcRenderer.invoke('env:set', projectPath, key, value),
 
   // Notifications
   showNotification: (opts) => ipcRenderer.invoke('notification:show', opts),

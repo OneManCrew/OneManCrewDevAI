@@ -61,6 +61,24 @@ const mockAPI = {
   },
   reloadPreview: async () => true,
   closePreview: async () => true,
+  readEnv: async () => {
+    console.log('[mock] readEnv');
+    return {};
+  },
+  setEnvVar: async (projectPath, key, value) => {
+    console.log(`[mock] setEnvVar: ${key}=${value}`);
+    return true;
+  },
+  detectViteServer: async () => {
+    // In browser mode, try to probe common ports via fetch
+    for (const port of [5173, 5174, 3000, 3001]) {
+      try {
+        const res = await fetch(`http://localhost:${port}`, { mode: 'no-cors', signal: AbortSignal.timeout(1500) });
+        return `http://localhost:${port}`;
+      } catch (e) { /* next */ }
+    }
+    return null;
+  },
   showNotification: async ({ title, body }) => {
     console.log(`[mock notification] ${title}: ${body}`);
     if ('Notification' in window && Notification.permission === 'granted') {

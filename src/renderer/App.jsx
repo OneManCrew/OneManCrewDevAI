@@ -10,6 +10,7 @@ import SettingsPanel from './components/SettingsPanel';
 import TitleBar from './components/TitleBar';
 import api from './services/electronBridge';
 import AgentChatModal from './components/AgentChatModal';
+import tokenTracker from './services/tokenUsageTracker';
 
 const VIEWS = {
   PROJECT: 'project',
@@ -55,6 +56,13 @@ export default function App() {
       }
     })();
   }, []);
+
+  // Initialize token usage tracker when project changes
+  useEffect(() => {
+    if (projectPath) {
+      tokenTracker.init(projectPath);
+    }
+  }, [projectPath]);
 
   // Persist settings on change
   const updateSettings = useCallback(

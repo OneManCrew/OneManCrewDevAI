@@ -1,4 +1,5 @@
 import React from 'react';
+import TokenUsageBadge from './TokenUsageBadge';
 
 export default function TitleBar({ projectPath }) {
   const projectName = projectPath ? projectPath.split(/[\\/]/).pop() : null;
@@ -20,6 +21,8 @@ export default function TitleBar({ projectPath }) {
           <span className="font-mono">{projectName}</span>
         </div>
       )}
+      <div className="flex-1" />
+      <TokenUsageBadge />
     </div>
   );
 }

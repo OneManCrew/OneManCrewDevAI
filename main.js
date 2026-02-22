@@ -297,6 +297,31 @@ function closePreviewWindow() {
   }
 }
 
+// ─── Vite Dev Server Detection ────────────────────────────────────────────────
+
+const http = require('http');
+
+/**
+ * Probes common dev server ports to detect a running Vite/React dev server.
+ * Returns the URL of the first responding server, or null if none found.
+ */
+async function detectViteServer(ports = [5173, 5174, 3000, 3001]) {
+  for (const port of ports) {
+    try {
+      const alive = await new Promise((resolve) => {
+        const req = http.get(`http://localhost:${port}`, { timeout: 1500 }, (res) => {
+          res.resume(); // drain response
+          resolve(res.statusCode < 400);
+        });
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => { req.destroy(); resolve(false); });
+      });
+      if (alive) return `http://localhost:${port}`;
+    } catch (e) { /* next port */ }
+  }
+  return null;
+}
+
 // ─── IPC Handlers ──────────────────────────────────────────────────────────────
 
 function registerIpcHandlers() {
@@ -371,6 +396,60 @@ function registerIpcHandlers() {
   ipcMain.handle('preview:close', () => {
     closePreviewWindow();
     return true;
+  });
+
+  // Detect running Vite/React dev server — returns URL string or null
+  ipcMain.handle('preview:detectVite', async () => {
+    return detectViteServer();
+  });
+
+  // .env file management
+  ipcMain.handle('env:read', async (_event, projectPath) => {
+    try {
+      const envPath = path.join(projectPath, '.env');
+      if (!fs.existsSync(envPath)) return {};
+      const raw = fs.readFileSync(envPath, 'utf-8');
+      const vars = {};
+      for (const line of raw.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = trimmed.substring(0, eqIdx).trim();
+        const val = trimmed.substring(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+        vars[key] = val;
+      }
+      return vars;
+    } catch (e) {
+      console.warn('[env:read] Failed:', e);
+      return {};
+    }
+  });
+
+  ipcMain.handle('env:set', async (_event, projectPath, key, value) => {
+    try {
+      const envPath = path.join(projectPath, '.env');
+      let lines = [];
+      if (fs.existsSync(envPath)) {
+        lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+      }
+      // Update existing key or append
+      let found = false;
+      for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (trimmed.startsWith(key + '=') || trimmed.startsWith(key + ' =')) {
+          lines[i] = `${key}=${value}`;
+          found = true;
+          break;
+        }
+      }
+      if (!found) lines.push(`${key}=${value}`);
+      await fse.outputFile(envPath, lines.join('\n'), 'utf-8');
+      return true;
+    } catch (e) {
+      console.warn('[env:set] Failed:', e);
+      return false;
+    }
   });
 
   // Notification

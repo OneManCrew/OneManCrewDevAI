@@ -4,6 +4,8 @@
  * callbacks: { onToken, onDone, onError }
  */
 
+import tokenTracker, { estimateTokens } from './tokenUsageTracker';
+
 // ─── Message sanitizer (ensures Anthropic compatibility) ─────────────────────
 
 function sanitizeMessages(messages) {
@@ -49,7 +51,7 @@ class OpenAICompatibleProvider {
     this.getApiKey = getApiKey;
   }
 
-  async chat(messages, settings, { onToken, onDone, onError }) {
+  async chat(messages, settings, { onToken, onDone, onError, agentId }) {
     const apiKey = this.getApiKey(settings);
     const model = settings.selectedModel || 'gpt-4o';
 
@@ -105,6 +107,12 @@ class OpenAICompatibleProvider {
         }
       }
 
+      tokenTracker.record({
+        agent: agentId || 'unknown',
+        model,
+        inputText: messages.map(m => m.content).join('\n'),
+        outputText: fullText,
+      });
       onDone(fullText);
     } catch (err) {
       onError(err);
@@ -115,7 +123,7 @@ class OpenAICompatibleProvider {
 // ─── Anthropic Provider ───────────────────────────────────────────────────────
 
 class AnthropicProvider {
-  async chat(messages, settings, { onToken, onDone, onError }) {
+  async chat(messages, settings, { onToken, onDone, onError, agentId }) {
     const apiKey = settings.apiKeys?.anthropic;
     if (!apiKey) {
       onError(new Error('Anthropic API key is not configured. Go to Settings.'));
@@ -185,6 +193,12 @@ class AnthropicProvider {
         }
       }
 
+      tokenTracker.record({
+        agent: agentId || 'unknown',
+        model,
+        inputText: messages.map(m => m.content).join('\n'),
+        outputText: fullText,
+      });
       onDone(fullText);
     } catch (err) {
       onError(err);
@@ -195,7 +209,7 @@ class AnthropicProvider {
 // ─── Gemini Provider ──────────────────────────────────────────────────────────
 
 class GeminiProvider {
-  async chat(messages, settings, { onToken, onDone, onError }) {
+  async chat(messages, settings, { onToken, onDone, onError, agentId }) {
     const apiKey = settings.apiKeys?.gemini;
     if (!apiKey) {
       onError(new Error('Gemini API key is not configured. Go to Settings.'));
@@ -268,6 +282,12 @@ class GeminiProvider {
         }
       }
 
+      tokenTracker.record({
+        agent: agentId || 'unknown',
+        model,
+        inputText: messages.map(m => m.content).join('\n'),
+        outputText: fullText,
+      });
       onDone(fullText);
     } catch (err) {
       onError(err);
