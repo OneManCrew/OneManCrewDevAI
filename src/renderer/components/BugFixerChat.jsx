@@ -376,6 +376,21 @@ export default function BugFixerChat({ projectPath, settings, onUpdateSettings, 
             results.push(`## File: ${tool.path}\n**File not found on disk.**`);
             addLog(`  File not found: ${tool.path}`, 'warning');
           }
+        } else if (tool.type === 'exec-command') {
+          addLog(`⚡ Running command: ${tool.command}`, 'info');
+          try {
+            const result = await api.execCommandQueued({ command: tool.command, cwd: projectPath });
+            const stdout = (result.stdout || '').trim();
+            const stderr = (result.stderr || '').trim();
+            const output = stdout || stderr || '(no output)';
+            // Limit to 2000 chars
+            const truncated = output.length > 2000 ? output.substring(0, 2000) + '\n... (truncated)' : output;
+            results.push(`## Command: \`${tool.command}\`\n**Exit code:** ${result.code}\n\`\`\`\n${truncated}\n\`\`\``);
+            addLog(`  Exit code: ${result.code}`, result.code === 0 ? 'success' : 'warning');
+          } catch (cmdErr) {
+            results.push(`## Command: \`${tool.command}\`\n**Error:** ${cmdErr.message}`);
+            addLog(`  Command failed: ${cmdErr.message}`, 'error');
+          }
         }
       } catch (e) {
         results.push(`## Tool Error (${tool.type}): ${e.message}`);

@@ -63,14 +63,14 @@ You are the final stage in a software development pipeline. The user will descri
 
 ## Available Tools
 
-### 1. Read Directory (Recursive) — "File Map"
+### 1. Read Directory (Recursive) — "File Map" (uses \`read_directory_recursive\` / \`fs:readDirRecursive\` IPC)
 Before analyzing ANY bug, your **very first action** MUST be to scan the full project directory. This gives you the real "File Map" — the ground truth of what actually exists on disk.
 \`\`\`read-directory
 {"path": ".", "maxDepth": 4}
 \`\`\`
 - \`path\` is relative to the project root. Use \`"."\` for the full project.
 - \`maxDepth\` controls how deep to scan (default: 4).
-- The system will return the full file tree. Use it to verify that paths referenced in code actually exist on disk.
+- The system will return the full file tree (ignores \`node_modules\`, \`.git\`, \`dist\`). Use it to verify that paths referenced in code actually exist on disk.
 - **You MUST use this tool as your FIRST action in every conversation, before any analysis.** This prevents misdiagnosis caused by incorrect path assumptions.
 - Think of this as running \`ls -R\` on the project — you need to SEE the real file layout before you can diagnose anything.
 
@@ -79,6 +79,19 @@ To inspect a specific file's contents:
 \`\`\`read-file
 {"path": "src/index.html"}
 \`\`\`
+
+### 3. Execute Command (Queued)
+Run a shell command in the project directory to gather diagnostic information (e.g., check if a dependency is installed, verify a build output, test a script):
+\`\`\`exec-command
+{"command": "node --check main.js", "description": "Verify main.js has no syntax errors"}
+\`\`\`
+Use this for:
+- Running \`node --check\` to validate JavaScript files
+- Running \`npm ls <package>\` to check if a dependency is installed
+- Running \`cat package.json | grep main\` to inspect config values
+- Any diagnostic command that helps you understand the bug
+
+Commands run via a sequential queue with a 5-minute timeout. Use this tool **during diagnosis** to gather facts, not just in fix instructions.
 
 ## Available Specialist Agents
 - **Backend Engineer** (backend) — Server-side, API, database, business logic
@@ -131,7 +144,12 @@ You are authorized to include the following install commands in your fix instruc
 When you detect a missing installer or build tool, include an \`exec-command\` block in your fix instructions so the coding agent installs it automatically.
 
 ## Path-Mismatch Diagnosis Protocol
-When the user reports that **CSS is not working**, **JS is not loading**, **styles are missing**, **the page is blank**, or any similar "file not found" symptom:
+**CRITICAL — CSS / Electron / "not working" bugs:** Before you even THINK about looking at code content, you MUST:
+1. Scan the directory tree (\`read-directory\`)
+2. Read the HTML file (\`read-file\`)
+3. Compare every path in the HTML against the File Map
+
+When the user reports that **CSS is not working**, **JS is not loading**, **styles are missing**, **the page is blank**, **Electron shows a white screen**, or any similar symptom:
 1. **Do NOT assume the problem is inside the CSS/JS file itself.** The #1 cause is a **path mismatch** — the HTML references a path that doesn't match the actual file location on disk.
 2. **Read the HTML file** using \`\`\`read-file\`\`\` and extract every \`<script src="...">\` and \`<link href="...">\` tag.
 3. **Compare each path** against the File Map you scanned. Check:
@@ -162,13 +180,14 @@ ${ASK_USER_TOOL_INSTRUCTION}`;
 // ─── Tool Block Parser ──────────────────────────────────────────────────────────
 
 /**
- * Parses ```read-directory and ```read-file tool blocks from the LLM output.
- * Returns array of { type, path, maxDepth? }.
+ * Parses ```read-directory, ```read-file, and ```exec-command tool blocks from the LLM output.
+ * Returns array of { type, path?, maxDepth?, command?, description? }.
  */
 export function parseToolBlocks(output) {
   const tools = [];
   const dirRegex = /```read-directory\s*\n([\s\S]*?)```/g;
   const fileRegex = /```read-file\s*\n([\s\S]*?)```/g;
+  const cmdRegex = /```exec-command\s*\n([\s\S]*?)```/g;
   let match;
 
   while ((match = dirRegex.exec(output)) !== null) {
@@ -189,6 +208,16 @@ export function parseToolBlocks(output) {
     } catch {
       const p = match[1].trim();
       if (p) tools.push({ type: 'read-file', path: p });
+    }
+  }
+
+  while ((match = cmdRegex.exec(output)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1].trim());
+      if (parsed.command) tools.push({ type: 'exec-command', command: parsed.command, description: parsed.description || '' });
+    } catch {
+      const cmd = match[1].trim();
+      if (cmd) tools.push({ type: 'exec-command', command: cmd, description: '' });
     }
   }
 
