@@ -315,16 +315,12 @@ export function buildConversationMessages(chatHistory, currentPhase, projectPath
 export function parseArchitectOutput(text) {
   const result = { srs: null, hld: null };
 
-  // Primary: extract from ```srs / ```hld fences
-  const srsMatch = text.match(/```srs\s*\n([\s\S]*?)```/);
-  if (srsMatch) {
-    result.srs = srsMatch[1].trim();
-  }
-
-  const hldMatch = text.match(/```hld\s*\n([\s\S]*?)```/);
-  if (hldMatch) {
-    result.hld = hldMatch[1].trim();
-  }
+  // Primary: extract from ```srs / ```hld fences.
+  // IMPORTANT: The content may contain nested code blocks (``` inside the document).
+  // We use a greedy match ([\s\S]*) and then backtrack to the LAST ``` that closes
+  // the fence, rather than a lazy match that stops at the first inner ```.
+  result.srs = _extractFencedBlock(text, 'srs');
+  result.hld = _extractFencedBlock(text, 'hld');
 
   // Fallback: if no fences found, detect by heading and extract full content.
   // This handles cases where the LLM outputs the document as plain markdown
@@ -350,6 +346,55 @@ export function parseArchitectOutput(text) {
   }
 
   return result;
+}
+
+/**
+ * Extracts a fenced block (```tag ... ```) that may contain nested code blocks.
+ * Finds the opening ```tag and then counts nested ``` pairs to find the true closing fence.
+ * Returns the content between the opening and closing fences, or null if not found.
+ */
+function _extractFencedBlock(text, tag) {
+  const openPattern = new RegExp('```' + tag + '\\s*\\n');
+  const openMatch = openPattern.exec(text);
+  if (!openMatch) return null;
+
+  const startIdx = openMatch.index + openMatch[0].length;
+  let depth = 0;
+  let i = startIdx;
+
+  // Walk through the text character by character, tracking nested ``` blocks
+  while (i < text.length) {
+    // Check for ``` at current position (must be at start of line or after newline)
+    if (text.substring(i, i + 3) === '```') {
+      // Look ahead: is this an opening fence (has content after ```) or closing fence (``` alone on line)?
+      const restOfLine = text.substring(i + 3, text.indexOf('\n', i + 3) === -1 ? text.length : text.indexOf('\n', i + 3)).trim();
+
+      if (depth === 0 && restOfLine.length === 0) {
+        // This is the closing fence for our top-level block
+        return text.substring(startIdx, i).trim();
+      }
+
+      if (restOfLine.length > 0 && !restOfLine.startsWith('`')) {
+        // Opening fence of a nested code block (e.g., ```js, ```json)
+        depth++;
+        i += 3 + restOfLine.length;
+      } else if (depth > 0 && restOfLine.length === 0) {
+        // Closing fence of a nested code block
+        depth--;
+        i += 3;
+      } else {
+        // Closing fence at depth 0 — this is our match
+        return text.substring(startIdx, i).trim();
+      }
+    } else {
+      i++;
+    }
+  }
+
+  // If we reached end of text without finding closing fence, return everything
+  // (the LLM may have forgotten the closing fence)
+  const content = text.substring(startIdx).trim();
+  return content.length > 200 ? content : null;
 }
 
 // ─── Atomic Document Save with Merge ────────────────────────────────────────
