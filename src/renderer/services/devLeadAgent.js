@@ -95,113 +95,59 @@ Then ask the user to review and approve or request changes.
 
 ## Your Current Task: GENERATE DETAILED WORK PLAN
 
-The user has approved your plan structure. Now generate the complete, detailed task list.
+Generate a complete, detailed work plan as a single JSON object inside a \`\`\`json code block.
 
-### IMPORTANT — Incremental Output Format:
-You MUST output the work plan as **separate blocks**, NOT as one giant JSON.
-The system will capture each block and save it to disk immediately. This prevents data loss from output truncation.
-
-**Step 1:** Output the plan header:
-\`\`\`plan-header
+### OUTPUT FORMAT — Single JSON object:
+\`\`\`json
 {
   "projectName": "Project Name",
-  "generatedAt": "ISO date string"
+  "phases": [
+    {
+      "name": "Phase 1: Setup & Scaffolding",
+      "description": "What this phase delivers",
+      "tasks": [
+        {
+          "title": "Create project structure with index.html, styles.css, and app.js",
+          "description": "Create the base project files. index.html should include <link> to styles.css and <script> to app.js. Set up the HTML skeleton with a container div, clock display area, theme buttons, and font buttons based on the UI mockup.",
+          "category": "setup",
+          "priority": "critical",
+          "estimatedHours": 3,
+          "dependencies": [],
+          "acceptanceCriteria": [
+            "index.html exists with proper DOCTYPE and meta tags",
+            "styles.css is linked in the HTML head",
+            "app.js is loaded at the bottom of body",
+            "Opening index.html in a browser shows the basic layout"
+          ],
+          "technicalNotes": "Files: index.html, styles.css, app.js. Use semantic HTML5 elements. No frameworks needed."
+        }
+      ]
+    }
+  ]
 }
 \`\`\`
 
-**Step 2:** For EACH phase, output a phase block:
-\`\`\`phase
-{
-  "id": "phase-1",
-  "name": "Phase 1: Foundation & Setup",
-  "description": "Brief description of this phase",
-  "order": 1
-}
-\`\`\`
+### CRITICAL RULES FOR EVERY TASK:
+1. **title** — MUST be specific and action-oriented. NEVER use generic names like "Task 1" or "Setup". Good: "Implement real-time clock update with setInterval". Bad: "Task 3".
+2. **description** — 2-4 sentences. MUST mention specific file names to create/modify and what code to write. A developer reading this should know exactly what to do.
+3. **category** — One of: setup, backend, frontend, integration, testing, devops, documentation
+4. **priority** — One of: critical, high, medium, low
+5. **estimatedHours** — Realistic number (2-8 hours per task)
+6. **acceptanceCriteria** — 3-5 testable items. Each must be verifiable (e.g., "Clicking the Dark theme button changes background to #1a1a2e")
+7. **technicalNotes** — Mention specific file paths, function names, CSS class names, DOM selectors, or libraries to use.
 
-**Step 3:** Immediately after each phase block, output each task in that phase as a separate block:
-\`\`\`task
-{
-  "id": "task-1-1",
-  "phaseId": "phase-1",
-  "title": "Short descriptive title",
-  "description": "What to build, which files to create/modify, key details.",
-  "category": "setup|backend|frontend|integration|testing|devops|documentation",
-  "priority": "critical|high|medium|low",
-  "order": 1,
-  "estimatedHours": 4,
-  "dependencies": [],
-  "acceptanceCriteria": [
-    "Criterion 1",
-    "Criterion 2"
-  ],
-  "technicalNotes": "Implementation hints, file paths, libraries.",
-  "tags": ["tag1", "tag2"]
-}
-\`\`\`
-
-**Step 4:** After ALL phases and tasks, output:
-\`\`\`plan-complete
-\`\`\`
-
-### Example flow:
-You can add brief commentary between blocks. The system only captures the fenced blocks.
-
-\`\`\`plan-header
-{ "projectName": "My App", "generatedAt": "2025-01-01T00:00:00Z" }
-\`\`\`
-
-Starting with the foundation phase...
-
-\`\`\`phase
-{ "id": "phase-1", "name": "Phase 1: Setup", "description": "Project scaffolding", "order": 1 }
-\`\`\`
-
-\`\`\`task
-{ "id": "task-1-1", "phaseId": "phase-1", "title": "Initialize project", "description": "Create project structure and install dependencies.", "category": "setup", "priority": "critical", "order": 1, "estimatedHours": 2, "dependencies": [], "acceptanceCriteria": ["npm install works", "Project runs"], "technicalNotes": "Use npm init, install express.", "tags": ["setup"] }
-\`\`\`
-
-...more tasks...
-
-\`\`\`plan-complete
-\`\`\`
-
-### Task Requirements:
-1. Every task MUST have ALL fields filled in — no empty or placeholder values.
-2. **title** — Clear, action-oriented (e.g., "Create user authentication API endpoints")
-3. **description** — 2-4 sentences. What to build, which files, key details. No code snippets.
-4. **dependencies** — Array of task IDs that must be completed first
-5. **acceptanceCriteria** — 3-5 short, testable one-line items
-6. **technicalNotes** — 1-3 sentences. Key hints only, no code blocks.
-7. **estimatedHours** — Realistic estimate for a mid-level developer
-8. **tags** — 2-4 relevant tags
+### TASK QUALITY CHECKLIST:
+- Does the title describe a concrete deliverable?
+- Does the description mention which files to create or modify?
+- Can a developer implement this task without asking questions?
+- Are the acceptance criteria testable by looking at the running app?
 
 ### Guidelines:
-- Tasks should be 2-8 hours each (split larger tasks)
-- Group related tasks into logical phases
-- First phase should always be project setup/scaffolding
-- Include testing tasks alongside feature tasks
-- Be specific in technicalNotes — mention file paths, function names, libraries
-
-### MANDATORY — "Project Skeleton Integration" Task:
-You MUST add a task titled **"Project Skeleton Integration"** as the **LAST task in EVERY phase**. This task ensures the project actually runs after each phase.
-
-This task must include the following in its description and acceptanceCriteria:
-1. **HTML verification**: Run a check (e.g. read the index.html file) to verify that every \`<script src="...">\` and \`<link rel="stylesheet" href="...">\` tag in the HTML points to a file that **actually exists on disk**. List the expected files explicitly.
-2. **Entry point validation**: Verify the main entry point file (e.g. \`index.html\`, \`main.jsx\`, \`App.jsx\`) exists and imports/references are correct.
-3. **Electron-specific** (if the project uses Electron): The task MUST include creating or verifying a valid \`main.js\` (Electron main process) that:
-   - Points to the correct \`index.html\` path via \`mainWindow.loadFile()\` or \`mainWindow.loadURL()\`
-   - Has proper \`BrowserWindow\` configuration
-   - Includes a valid \`preload.js\` path if needed
-4. **Smoke test**: Run the project's start/dev command and confirm it launches without errors.
-
-Example acceptanceCriteria for this task:
-- "All <script> and <link> tags in index.html reference files that exist on disk"
-- "Running \`npm run dev\` starts the application without errors"
-- "main.js loads the correct index.html path" (Electron only)
-- "No 404 errors for static assets in the browser console"
-
-Set this task's category to \`"integration"\`, priority to \`"critical"\`, and tag it with \`["skeleton", "integration", "verification"]\`.`,
+- Tasks should be 2-8 hours each
+- First phase: project setup/scaffolding
+- Last task in each phase: "Integration Verification" (category: "integration", priority: "critical") — verify all files reference each other correctly and the app runs
+- Be specific — mention file names, CSS class names, function names, DOM element IDs
+- Reference the UI mockup and SRS when describing visual/functional requirements`,
 
   [DL_PHASES.DONE]: `${BASE_PERSONA}
 
@@ -263,44 +209,52 @@ export function normalizeWorkplan(raw) {
 
   const plan = {};
 
+  // Helper: pick first truthy value from an object by multiple candidate keys
+  const pick = (obj, ...keys) => { for (const k of keys) { if (obj[k]) return obj[k]; } return undefined; };
+
   // Normalize header fields
-  plan.projectName = raw.projectName || raw['project-name'] ||
-    (raw['plan-header'] && (raw['plan-header'].projectName || raw['plan-header']['project-name'])) || 'Untitled Project';
-  plan.generatedAt = raw.generatedAt || raw['generated-date'] || raw['generatedAt'] ||
-    (raw['plan-header'] && (raw['plan-header'].generatedAt || raw['plan-header']['generated-date'])) || new Date().toISOString();
+  const hdr = raw['plan-header'] || raw['planHeader'] || {};
+  plan.projectName = pick(raw, 'projectName', 'project-name', 'project_name') ||
+    pick(hdr, 'projectName', 'project-name', 'project_name') || 'Untitled Project';
+  plan.generatedAt = pick(raw, 'generatedAt', 'generated-date', 'generated_date', 'created_date') ||
+    pick(hdr, 'generatedAt', 'generated-date', 'generated_date', 'created_date') || new Date().toISOString();
 
   // Normalize phases
   const rawPhases = raw.phases || [];
   plan.phases = rawPhases.map((p, pi) => {
     const phase = {
-      id: p.id || `phase-${pi + 1}`,
-      name: p.name || p['phase-name'] || `Phase ${pi + 1}`,
-      description: p.description || p['phase-description'] || '',
+      id: pick(p, 'id', 'phase_id', 'phaseId') || `phase-${pi + 1}`,
+      name: pick(p, 'name', 'phase-name', 'phase_name') || `Phase ${pi + 1}`,
+      description: pick(p, 'description', 'phase-description', 'phase_description') || '',
       order: p.order || pi + 1,
       tasks: [],
     };
 
     const rawTasks = p.tasks || [];
     phase.tasks = rawTasks.map((t, ti) => {
-      // Parse estimated hours from various formats
+      // Parse estimated hours from various formats (e.g. "4 hours", "2h", 3)
       let hours = t.estimatedHours || 0;
-      if (!hours && t['estimated-effort']) {
-        const m = String(t['estimated-effort']).match(/(\d+)/);
+      const effortStr = t['estimated-effort'] || t['estimated_effort'] || t.duration || '';
+      if (!hours && effortStr) {
+        const m = String(effortStr).match(/(\d+)/);
         if (m) hours = parseInt(m[1], 10);
       }
 
+      const taskTitle = pick(t, 'title', 'task-name', 'task_name') || `Task ${ti + 1}`;
+      const taskDesc = pick(t, 'description', 'task-description', 'task_description') || '';
+
       return {
-        id: String(t.id || `task-${pi + 1}-${ti + 1}`),
+        id: String(pick(t, 'id', 'task_id', 'taskId') || `task-${pi + 1}-${ti + 1}`),
         phaseId: phase.id,
-        title: t.title || t['task-name'] || `Task ${ti + 1}`,
-        description: t.description || t['task-description'] || '',
-        category: t.category || guessCategory(t.title || t['task-name'] || ''),
+        title: taskTitle,
+        description: taskDesc,
+        category: t.category || guessCategory(taskTitle),
         priority: (t.priority || 'medium').toLowerCase(),
         order: t.order || ti + 1,
         estimatedHours: hours,
         dependencies: (t.dependencies || []).map(String),
-        acceptanceCriteria: t.acceptanceCriteria || [],
-        technicalNotes: t.technicalNotes || '',
+        acceptanceCriteria: t.acceptanceCriteria || t.acceptance_criteria || [],
+        technicalNotes: t.technicalNotes || t.technical_notes || t.notes || '',
         tags: t.tags || [],
         status: (t.status || 'pending').toLowerCase().replace(/\s+/g, '_').replace('not_started', 'pending'),
       };
