@@ -172,12 +172,15 @@ The coding agents have **three tools**, invoked via fenced code blocks in the LL
 
 When `agentType === 'setup'`, the system prompt includes additional mandatory rules:
 
-1. **Desktop/Standalone Detection** — If the HLD mentions Standalone, Desktop, Electron, or native application:
-   - Must install `electron-builder` (preferred) or `@electron-forge/cli`
+1. **HARD RULE — Electron Projects** — For every Electron/Desktop/Standalone project:
+   - Must create `main.js` with `BrowserWindow`, `loadFile('index.html')`, and proper lifecycle events
+   - Must set `"main": "main.js"` and `"start": "electron ."` in `package.json`
+   - Must install `electron` and `electron-builder` (or `@electron-forge/cli`)
    - Must configure the packaging tool in `package.json`
-   - Must create a valid `main.js` (Electron main process)
-2. **Complete `package.json` Scripts** — Must include: `dev`, `build`, `package`, `start`, `lint` — all real working commands
-3. **README.md** — Must create in project root with: project name, prerequisites, installation, development, building, packaging, project structure, tech stack
+2. **Directory Scaffolding** — Must create ALL project directories from the HLD (`src/`, `public/`, `dist/`, etc.) BEFORE writing files
+3. **Complete `package.json` Scripts** — Must include: `dev`, `build`, `package`, `start`, `lint` — all real working commands
+4. **HARD RULE — Syntax Validation** — Must run `node --check` on the main entry file before completing the task; if it fails, fix and re-check
+5. **README.md** — Must create in project root with: project name, prerequisites, installation, development, building, packaging, project structure, tech stack
 
 ---
 

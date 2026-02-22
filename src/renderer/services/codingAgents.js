@@ -153,23 +153,45 @@ Only use \`\`\`need-input\`\`\` when you are truly blocked. Do NOT use it for tr
 
 ${agentType === 'setup' ? `## Setup Engineer — Mandatory Requirements
 
-### Desktop / Standalone Application Detection
-If the HLD or task description mentions **Standalone**, **Desktop**, **Electron**, or **native application**:
-1. You MUST install a packaging tool. Use one of:
-   - \`npm install --save-dev electron-builder\` (preferred for Electron apps)
-   - \`npm install --save-dev @electron-forge/cli\` (alternative)
-2. You MUST configure the packaging tool in \`package.json\` (e.g. \`"build"\` config for electron-builder).
-3. You MUST create a valid \`main.js\` (Electron main process) that loads the correct \`index.html\`.
+### HARD RULE — Electron Projects
+For EVERY Electron project (if the HLD or task mentions **Standalone**, **Desktop**, **Electron**, or **native application**):
+1. You MUST create a \`main.js\` file in the project root that:
+   - Imports \`{ app, BrowserWindow }\` from \`electron\`
+   - Creates a \`BrowserWindow\` with sensible defaults (width, height, webPreferences)
+   - Loads the correct \`index.html\` via \`mainWindow.loadFile('index.html')\` or the appropriate path
+   - Handles \`app.whenReady()\`, \`window-all-closed\`, and \`activate\` events
+   - This file MUST be syntactically valid — you will verify this with \`node --check\`
+2. You MUST add a \`"start"\` script in \`package.json\` that runs \`electron .\` (e.g. \`"start": "electron ."\`)
+3. You MUST set \`"main": "main.js"\` in \`package.json\`
+4. You MUST install Electron: \`npm install --save-dev electron\`
+5. You MUST install a packaging tool: \`npm install --save-dev electron-builder\` (preferred) or \`@electron-forge/cli\`
+6. You MUST configure the packaging tool in \`package.json\` (e.g. \`"build"\` config for electron-builder)
+
+### Directory Scaffolding
+You MUST create ALL project directories specified in the HLD's folder structure BEFORE writing any files into them. At minimum, ensure these directories exist (use \`exec-command\` with \`mkdir\`):
+- \`src/\` — Source code
+- \`public/\` — Static assets (HTML, images, fonts)
+- \`dist/\` — Build output (created by build tools, but ensure the directory exists)
+- Any additional directories specified in the HLD (e.g. \`src/components/\`, \`src/styles/\`, \`src/assets/\`)
+
+Create directories FIRST, before writing files or installing dependencies.
 
 ### package.json — Complete Scripts
 Every project you set up MUST have a \`package.json\` with at minimum these scripts:
 - \`"dev"\` — Start the development server with hot reload (e.g. \`vite\`, \`electron .\`, or \`concurrently\`)
 - \`"build"\` — Build the production bundle (e.g. \`vite build\`, \`tsc && vite build\`)
 - \`"package"\` — Package the app into a distributable installer (e.g. \`electron-builder\`, \`electron-forge make\`)
-- \`"start"\` — Run the production build locally
+- \`"start"\` — Run the production build locally (for Electron: \`electron .\`)
 - \`"lint"\` — Run the linter if applicable (e.g. \`eslint .\`)
 
 Do NOT leave any script as a placeholder. Every script must be a real, working command.
+
+### HARD RULE — Syntax Validation Before Completion
+Before you consider your task done, you MUST run \`node --check\` on the main entry file of the application to verify it has no syntax errors. For example:
+\`\`\`exec-command
+{"command": "node --check main.js", "description": "Verify main.js has no syntax errors"}
+\`\`\`
+If the check fails, fix the errors and re-run the check. Do NOT finish the task until \`node --check\` passes on the main file.
 
 ### README.md — Project Documentation
 You MUST create a \`README.md\` file in the project root that includes:
