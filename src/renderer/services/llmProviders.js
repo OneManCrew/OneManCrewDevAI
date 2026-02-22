@@ -5,10 +5,12 @@
  */
 
 import tokenTracker, { estimateTokens } from './tokenUsageTracker';
+import log from './logger';
 
 // ─── Message sanitizer (ensures Anthropic compatibility) ─────────────────────
 
 function sanitizeMessages(messages) {
+  log.debug('sanitizeMessages', 'Input', { count: messages.length, roles: messages.map(m => m.role) });
   // Filter out empty content messages
   let sanitized = messages.filter((m) => m.content && m.content.trim());
 
@@ -40,7 +42,9 @@ function sanitizeMessages(messages) {
     chat.shift();
   }
 
-  return [...system, ...chat];
+  const result = [...system, ...chat];
+  log.debug('sanitizeMessages', 'Output', { count: result.length, roles: result.map(m => m.role) });
+  return result;
 }
 
 // ─── OpenAI-compatible provider (works for OpenAI, OpenRouter, Ollama) ────────
@@ -54,8 +58,10 @@ class OpenAICompatibleProvider {
   async chat(messages, settings, { onToken, onDone, onError, agentId }) {
     const apiKey = this.getApiKey(settings);
     const model = settings.selectedModel || 'gpt-4o';
+    log.info('OpenAIProvider', 'chat() called', { baseUrl: this.baseUrl, model, agentId, messageCount: messages.length, hasApiKey: !!apiKey });
 
     try {
+      log.info('OpenAIProvider', 'Sending fetch request', { url: `${this.baseUrl}/chat/completions`, model, maxTokens: settings.contextWindow || 8192 });
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -70,8 +76,10 @@ class OpenAICompatibleProvider {
         }),
       });
 
+      log.info('OpenAIProvider', 'Fetch response received', { status: response.status, ok: response.ok });
       if (!response.ok) {
         const errBody = await response.text();
+        log.error('OpenAIProvider', 'HTTP error', { status: response.status, body: errBody.substring(0, 500) });
         throw new Error(`Provider returned ${response.status}: ${errBody}`);
       }
 
@@ -79,10 +87,12 @@ class OpenAICompatibleProvider {
       const decoder = new TextDecoder();
       let fullText = '';
       let buffer = '';
+      let chunkCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        chunkCount++;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -107,6 +117,7 @@ class OpenAICompatibleProvider {
         }
       }
 
+      log.info('OpenAIProvider', 'Stream complete', { chunks: chunkCount, outputLen: fullText.length });
       tokenTracker.record({
         agent: agentId || 'unknown',
         model,
@@ -115,6 +126,7 @@ class OpenAICompatibleProvider {
       });
       onDone(fullText);
     } catch (err) {
+      log.error('OpenAIProvider', 'chat() error', { message: err.message });
       onError(err);
     }
   }
@@ -126,18 +138,22 @@ class AnthropicProvider {
   async chat(messages, settings, { onToken, onDone, onError, agentId }) {
     const apiKey = settings.apiKeys?.anthropic;
     if (!apiKey) {
+      log.error('AnthropicProvider', 'No API key configured');
       onError(new Error('Anthropic API key is not configured. Go to Settings.'));
       return;
     }
 
     const model = settings.selectedModel || 'claude-sonnet-4-20250514';
+    log.info('AnthropicProvider', 'chat() called', { model, agentId, messageCount: messages.length });
 
     // Sanitize and extract system message
     const sanitized = sanitizeMessages(messages);
     const systemMsg = sanitized.find((m) => m.role === 'system');
     const chatMessages = sanitized.filter((m) => m.role !== 'system');
+    log.info('AnthropicProvider', 'Messages sanitized', { chatCount: chatMessages.length, hasSystem: !!systemMsg });
 
     try {
+      log.info('AnthropicProvider', 'Sending fetch request', { model, maxTokens: settings.contextWindow || 8192 });
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -155,8 +171,10 @@ class AnthropicProvider {
         }),
       });
 
+      log.info('AnthropicProvider', 'Fetch response received', { status: response.status, ok: response.ok });
       if (!response.ok) {
         const errBody = await response.text();
+        log.error('AnthropicProvider', 'HTTP error', { status: response.status, body: errBody.substring(0, 500) });
         throw new Error(`Anthropic returned ${response.status}: ${errBody}`);
       }
 
@@ -164,10 +182,12 @@ class AnthropicProvider {
       const decoder = new TextDecoder();
       let fullText = '';
       let buffer = '';
+      let chunkCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        chunkCount++;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -193,6 +213,7 @@ class AnthropicProvider {
         }
       }
 
+      log.info('AnthropicProvider', 'Stream complete', { chunks: chunkCount, outputLen: fullText.length });
       tokenTracker.record({
         agent: agentId || 'unknown',
         model,
@@ -201,6 +222,7 @@ class AnthropicProvider {
       });
       onDone(fullText);
     } catch (err) {
+      log.error('AnthropicProvider', 'chat() error', { message: err.message });
       onError(err);
     }
   }
@@ -212,11 +234,13 @@ class GeminiProvider {
   async chat(messages, settings, { onToken, onDone, onError, agentId }) {
     const apiKey = settings.apiKeys?.gemini;
     if (!apiKey) {
+      log.error('GeminiProvider', 'No API key configured');
       onError(new Error('Gemini API key is not configured. Go to Settings.'));
       return;
     }
 
     const model = settings.selectedModel || 'gemini-2.0-flash';
+    log.info('GeminiProvider', 'chat() called', { model, agentId, messageCount: messages.length });
 
     // Sanitize and convert messages to Gemini format
     const sanitized = sanitizeMessages(messages);
@@ -244,8 +268,10 @@ class GeminiProvider {
         }
       );
 
+      log.info('GeminiProvider', 'Fetch response received', { status: response.status, ok: response.ok });
       if (!response.ok) {
         const errBody = await response.text();
+        log.error('GeminiProvider', 'HTTP error', { status: response.status, body: errBody.substring(0, 500) });
         throw new Error(`Gemini returned ${response.status}: ${errBody}`);
       }
 
@@ -253,10 +279,12 @@ class GeminiProvider {
       const decoder = new TextDecoder();
       let fullText = '';
       let buffer = '';
+      let chunkCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        chunkCount++;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -282,6 +310,7 @@ class GeminiProvider {
         }
       }
 
+      log.info('GeminiProvider', 'Stream complete', { chunks: chunkCount, outputLen: fullText.length });
       tokenTracker.record({
         agent: agentId || 'unknown',
         model,
@@ -290,6 +319,7 @@ class GeminiProvider {
       });
       onDone(fullText);
     } catch (err) {
+      log.error('GeminiProvider', 'chat() error', { message: err.message });
       onError(err);
     }
   }
@@ -365,7 +395,7 @@ export async function fetchModels(providerId, settings) {
         return [];
     }
   } catch (err) {
-    console.warn(`Failed to fetch models for ${providerId}:`, err);
+    log.warn('fetchModels', `Failed for ${providerId}`, { message: err.message });
     return [];
   }
 }
@@ -393,6 +423,7 @@ export function getAgentSettings(settings, agentId) {
 
 export function createLLMProvider(settings) {
   const provider = settings?.provider || 'openai';
+  log.info('createLLMProvider', 'Creating provider', { provider, model: settings?.selectedModel });
 
   switch (provider) {
     case 'ollama':

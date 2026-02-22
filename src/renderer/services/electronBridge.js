@@ -104,6 +104,39 @@ const mockAPI = {
   }),
 };
 
-const api = isElectron() ? window.electronAPI : mockAPI;
+const rawApi = isElectron() ? window.electronAPI : mockAPI;
+
+// ─── Logging proxy: logs every API call to console ──────────────────────────
+const SKIP_LOG = new Set(['isWindowFocused']); // too noisy
+
+const api = new Proxy(rawApi, {
+  get(target, prop) {
+    const original = target[prop];
+    if (typeof original !== 'function' || SKIP_LOG.has(prop)) return original;
+    return async function (...args) {
+      const argSummary = args.map(a => {
+        if (typeof a === 'string') return a.length > 120 ? a.substring(0, 120) + '...' : a;
+        return JSON.stringify(a)?.substring(0, 80);
+      });
+      console.log(`🔧 [api.${prop}] called`, argSummary);
+      try {
+        const result = await original.apply(target, args);
+        const resultSummary = typeof result === 'string'
+          ? `string(${result.length})`
+          : result === true ? 'true'
+          : result === false ? 'false'
+          : result === null || result === undefined ? 'null'
+          : Array.isArray(result) ? `array(${result.length})`
+          : typeof result === 'object' ? `object(${Object.keys(result).length} keys)`
+          : String(result);
+        console.log(`✅ [api.${prop}] result:`, resultSummary);
+        return result;
+      } catch (err) {
+        console.error(`❌ [api.${prop}] error:`, err.message);
+        throw err;
+      }
+    };
+  },
+});
 
 export default api;

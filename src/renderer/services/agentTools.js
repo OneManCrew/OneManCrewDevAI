@@ -1,4 +1,5 @@
 import api from './electronBridge.js';
+import log from './logger.js';
 
 // ─── Integration Check Tool ─────────────────────────────────────────────────────
 // Scans the project's main HTML file (or Electron main.js) and verifies that
@@ -16,6 +17,7 @@ import api from './electronBridge.js';
  * 4. Verifies package.json has start/dev/build scripts
  */
 export async function runIntegrationCheck(projectPath) {
+  log.info('agentTools', 'runIntegrationCheck started', { projectPath });
   const issues = [];
   const p = projectPath.replace(/[\\/]$/, '');
 
@@ -128,6 +130,7 @@ export async function runIntegrationCheck(projectPath) {
     }
   }
 
+  log.info('agentTools', 'runIntegrationCheck done', { passed: issues.length === 0, issueCount: issues.length });
   return {
     passed: issues.length === 0,
     issues,

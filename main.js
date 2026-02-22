@@ -379,20 +379,25 @@ function registerIpcHandlers() {
 
   ipcMain.handle('fs:readFile', (_event, filePath) => {
     try {
-      return fs.readFileSync(filePath, 'utf-8');
+      const content = fs.readFileSync(filePath, 'utf-8');
+      console.log(`[IPC:readFile] ${filePath} => ${content ? content.length + ' chars' : 'null'}`);
+      return content;
     } catch {
+      console.log(`[IPC:readFile] ${filePath} => null (not found)`);
       return null;
     }
   });
 
   ipcMain.handle('fs:writeFile', (_event, filePath, content) => {
+    console.log(`[IPC:writeFile] ${filePath} (${content?.length || 0} chars)`);
     try {
       const dir = path.dirname(filePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(filePath, content, 'utf-8');
+      console.log(`[IPC:writeFile] ${filePath} => OK`);
       return true;
     } catch (err) {
-      console.error('fs:writeFile error:', err);
+      console.error(`[IPC:writeFile] ${filePath} => ERROR:`, err.message);
       return false;
     }
   });
@@ -603,16 +608,18 @@ function registerIpcHandlers() {
 
   // Safe file write — acquires a per-file lock, waits if busy, writes atomically via fs-extra
   ipcMain.handle('safe-write-file', async (_event, filePath, content) => {
+    console.log(`[IPC:safeWriteFile] ${filePath} (${content?.length || 0} chars)`);
     try {
       await fileLockManager.acquire(filePath);
       try {
         await fse.outputFile(filePath, content, 'utf-8');
+        console.log(`[IPC:safeWriteFile] ${filePath} => OK`);
         return true;
       } finally {
         fileLockManager.unlock(filePath);
       }
     } catch (err) {
-      console.error('safe-write-file error:', err);
+      console.error(`[IPC:safeWriteFile] ${filePath} => ERROR:`, err.message);
       return false;
     }
   });

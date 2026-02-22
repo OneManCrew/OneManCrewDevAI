@@ -10,6 +10,7 @@
  */
 
 import api from './electronBridge';
+import log from './logger';
 
 // Approximate cost per 1K tokens (USD) — conservative estimates
 const COST_PER_1K = {
@@ -68,6 +69,7 @@ class TokenUsageTracker {
    */
   async init(projectPath) {
     this._projectPath = projectPath;
+    log.info('TokenTracker', 'init', { projectPath });
     if (!projectPath) return;
     try {
       const knowledgePath = projectPath.replace(/[\\/]$/, '') + '/docs/project_knowledge.json';
@@ -99,6 +101,7 @@ class TokenUsageTracker {
   record({ agent, model, inputTokens, outputTokens, inputText, outputText }) {
     const inTok = inputTokens || estimateTokens(inputText);
     const outTok = outputTokens || estimateTokens(outputText);
+    log.info('TokenTracker', 'record', { agent, model, inTok, outTok });
     const rate = getCostRate(model);
     const cost = (inTok / 1000) * rate.input + (outTok / 1000) * rate.output;
 
@@ -198,7 +201,7 @@ class TokenUsageTracker {
 
       await api.safeWriteFile(knowledgePath, JSON.stringify(existing, null, 2));
     } catch (e) {
-      console.warn('[TokenUsageTracker] Failed to persist:', e);
+      log.warn('TokenTracker', 'Failed to persist', { message: e.message });
     }
   }
 }

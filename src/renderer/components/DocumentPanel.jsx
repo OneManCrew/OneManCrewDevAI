@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import MarkdownEditorViewer from './MarkdownEditorViewer';
 import api from '../services/electronBridge';
+import log from '../services/logger';
 
 /**
  * Document panel with tabs for SRS.md and HLD.md.
@@ -19,16 +20,18 @@ export default function DocumentPanel({ projectPath, onNext, onRequestChange }) 
   // Load docs from disk
   const loadDocs = useCallback(async () => {
     if (!docsPath) return;
+    log.info('DocumentPanel', 'loadDocs called', { srsPath, hldPath });
     setLoading(true);
     try {
       const [srs, hld] = await Promise.all([
         api.readFile(srsPath),
         api.readFile(hldPath),
       ]);
+      log.info('DocumentPanel', 'loadDocs result', { srsLen: srs?.length || 0, hldLen: hld?.length || 0 });
       setSrsContent(srs || '');
       setHldContent(hld || '');
     } catch (err) {
-      console.error('Failed to load docs:', err);
+      log.error('DocumentPanel', 'loadDocs failed', err);
     } finally {
       setLoading(false);
     }
@@ -40,6 +43,7 @@ export default function DocumentPanel({ projectPath, onNext, onRequestChange }) 
 
   // Reload docs (called after agent modifies them)
   const reloadDocs = useCallback(async () => {
+    log.info('DocumentPanel', 'reloadDocs triggered');
     await loadDocs();
   }, [loadDocs]);
 
@@ -159,17 +163,20 @@ export default function DocumentPanel({ projectPath, onNext, onRequestChange }) 
 export async function checkExistingDocs(projectPath) {
   if (!projectPath) return { hasDocs: false, srs: null, hld: null };
   const docsPath = projectPath.replace(/[\\/]$/, '') + '/docs';
+  log.info('checkExistingDocs', 'Checking', { docsPath });
   try {
     const [srs, hld] = await Promise.all([
       api.readFile(docsPath + '/SRS.md'),
       api.readFile(docsPath + '/HLD.md'),
     ]);
+    log.info('checkExistingDocs', 'Result', { hasDocs: !!(srs || hld), srsLen: srs?.length || 0, hldLen: hld?.length || 0 });
     return {
       hasDocs: !!(srs || hld),
       srs: srs || null,
       hld: hld || null,
     };
-  } catch {
+  } catch (e) {
+    log.error('checkExistingDocs', 'Failed', e);
     return { hasDocs: false, srs: null, hld: null };
   }
 }

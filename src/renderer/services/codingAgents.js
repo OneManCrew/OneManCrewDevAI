@@ -7,6 +7,7 @@
 import { createLLMProvider, getAgentSettings } from './llmProviders.js';
 import { runIntegrationCheck } from './agentTools.js';
 import api from './electronBridge.js';
+import log from './logger.js';
 
 // ─── Agent Type Definitions ─────────────────────────────────────────────────────
 
@@ -491,7 +492,7 @@ async function _validateSyntax(fullPath, projectPath) {
     return { valid: false, error: (result.stderr || '').trim().substring(0, 500) };
   } catch (e) {
     // If node -c itself fails to run, don't block — treat as valid
-    console.warn('[codingAgents] Syntax check failed to execute:', e);
+    log.warn('codingAgents', 'Syntax check failed to execute', { message: e.message });
     return { valid: true };
   }
 }
@@ -506,6 +507,7 @@ async function _runLLMCall(messages, settings, callbacks = {}) {
   const { onToken, onProgress, onStreamUpdate } = callbacks;
   const agentSettings = getAgentSettings(settings, 'coding');
   const provider = createLLMProvider(agentSettings);
+  log.info('codingAgents._runLLMCall', 'Starting', { messageCount: messages.length, provider: agentSettings?.provider, model: agentSettings?.selectedModel });
 
   let fullResponse = '';
   let tokenCount = 0;
@@ -515,6 +517,7 @@ async function _runLLMCall(messages, settings, callbacks = {}) {
       onToken: (token) => {
         fullResponse += token;
         tokenCount++;
+        if (tokenCount === 1) log.info('codingAgents._runLLMCall', 'First token received');
         if (onToken) onToken(token, tokenCount);
         const estimatedProgress = Math.min(95, Math.round((tokenCount / 4000) * 100));
         if (onProgress) onProgress(estimatedProgress);
@@ -522,10 +525,12 @@ async function _runLLMCall(messages, settings, callbacks = {}) {
       },
       onDone: (finalText) => {
         fullResponse = finalText || fullResponse;
+        log.info('codingAgents._runLLMCall', 'Done', { tokenCount, outputLen: fullResponse.length });
         if (onStreamUpdate) onStreamUpdate(fullResponse);
         resolve({ rawOutput: fullResponse, tokenCount });
       },
       onError: (err) => {
+        log.error('codingAgents._runLLMCall', 'Error', { message: err.message });
         reject(err);
       },
     });

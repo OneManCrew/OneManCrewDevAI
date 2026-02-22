@@ -5,6 +5,7 @@
  */
 
 import api from './electronBridge';
+import log from './logger';
 
 /**
  * Notify the user that an agent needs their attention.
@@ -19,9 +20,11 @@ import api from './electronBridge';
  */
 export async function notifyUserAttentionNeeded(agentName, message, options = {}) {
   const { silent = false, force = false } = options;
+  log.info('notificationService', 'notifyUserAttentionNeeded', { agentName, message: message.substring(0, 80) });
 
   try {
     const focused = await api.isWindowFocused();
+    log.debug('notificationService', 'Window focus check', { focused, force });
 
     if (!focused || force) {
       // Send OS notification with sound
@@ -35,7 +38,7 @@ export async function notifyUserAttentionNeeded(agentName, message, options = {}
       await api.flashFrame();
     }
   } catch (err) {
-    console.warn('[notificationService] Failed to send notification:', err);
+    log.error('notificationService', 'Failed to send notification', err);
   }
 }
 
