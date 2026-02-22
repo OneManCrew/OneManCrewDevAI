@@ -322,6 +322,8 @@ export function parseArchitectOutput(text) {
   result.srs = _extractFencedBlock(text, 'srs');
   result.hld = _extractFencedBlock(text, 'hld');
 
+  console.log(`[ARCHITECT:parse] Fenced extraction — SRS: ${result.srs ? result.srs.length + ' chars' : 'null'}, HLD: ${result.hld ? result.hld.length + ' chars' : 'null'}`);
+
   // Fallback: if no fences found, detect by heading and extract full content.
   // This handles cases where the LLM outputs the document as plain markdown
   // without wrapping it in ```hld or ```srs fences.
@@ -329,22 +331,23 @@ export function parseArchitectOutput(text) {
     const srsHeadingMatch = text.match(/(#\s+Software Requirements Specification[\s\S]*)/i);
     if (srsHeadingMatch) {
       let content = srsHeadingMatch[1].trim();
-      // If both SRS and HLD are in the same response (unfenced), split at HLD heading
       const hldSplit = content.match(/^([\s\S]*?)\n(?=#\s+High-Level Design)/m);
       if (hldSplit) content = hldSplit[1].trim();
-      if (content.length > 200) result.srs = content; // Only accept substantial content
+      if (content.length > 200) result.srs = content;
     }
+    console.log(`[ARCHITECT:parse] Fallback SRS: ${result.srs ? result.srs.length + ' chars' : 'null'}`);
   }
 
   if (!result.hld) {
     const hldHeadingMatch = text.match(/(#\s+High-Level Design[\s\S]*)/i);
     if (hldHeadingMatch) {
       let content = hldHeadingMatch[1].trim();
-      // If both are in the same response, HLD is everything after its heading
-      if (content.length > 200) result.hld = content; // Only accept substantial content
+      if (content.length > 200) result.hld = content;
     }
+    console.log(`[ARCHITECT:parse] Fallback HLD: ${result.hld ? result.hld.length + ' chars' : 'null'}`);
   }
 
+  console.log(`[ARCHITECT:parse] Final — SRS: ${result.srs ? result.srs.length + ' chars' : 'null'}, HLD: ${result.hld ? result.hld.length + ' chars' : 'null'}`);
   return result;
 }
 
@@ -437,6 +440,9 @@ export async function saveArchitectDocs(projectPath, docs) {
   const saved = [];
   const errors = [];
 
+  console.log(`[ARCHITECT:save] projectPath=${projectPath}, docsPath=${docsPath}`);
+  console.log(`[ARCHITECT:save] SRS: ${docs.srs ? docs.srs.length + ' chars' : 'null'}, HLD: ${docs.hld ? docs.hld.length + ' chars' : 'null'}`);
+
   for (const [key, filename] of [['srs', 'SRS.md'], ['hld', 'HLD.md']]) {
     if (!docs[key]) continue;
 
@@ -444,22 +450,30 @@ export async function saveArchitectDocs(projectPath, docs) {
     try {
       // Read existing content for merge
       const existing = await api.readFile(filePath).catch(() => null);
+      console.log(`[ARCHITECT:save] ${filename}: existing=${existing ? existing.length + ' chars' : 'null'}, new=${docs[key].length} chars`);
 
       // Merge new content with existing
       const merged = _mergeDocument(existing, docs[key]);
+      console.log(`[ARCHITECT:save] ${filename}: merged=${merged.length} chars, writing to: ${filePath}`);
 
-      // Write to disk
-      const writer = api.safeWriteFile || api.writeFile;
-      await writer(filePath, merged);
+      // Write to disk — prefer safeWriteFile (creates dirs), fall back to writeFile
+      const hasSafe = typeof api.safeWriteFile === 'function';
+      console.log(`[ARCHITECT:save] ${filename}: using ${hasSafe ? 'safeWriteFile' : 'writeFile'}`);
+      const writeResult = hasSafe
+        ? await api.safeWriteFile(filePath, merged)
+        : await api.writeFile(filePath, merged);
+      console.log(`[ARCHITECT:save] ${filename}: writeResult=${JSON.stringify(writeResult)}`);
 
       // Verify the write succeeded by reading back
       const verification = await api.readFile(filePath).catch(() => null);
+      console.log(`[ARCHITECT:save] ${filename}: verification read=${verification ? verification.length + ' chars' : 'null'}`);
       if (verification && verification.length > 0) {
         saved.push(filename);
       } else {
         errors.push(`${filename}: write succeeded but verification read returned empty`);
       }
     } catch (e) {
+      console.error(`[ARCHITECT:save] ${filename}: EXCEPTION:`, e);
       errors.push(`${filename}: ${e.message}`);
     }
   }

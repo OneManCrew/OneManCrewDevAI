@@ -223,38 +223,57 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             }
           }
 
+          // ─── Save docs helper (shared by GENERATION and DONE) ───
+          const _handleDocSave = async (docs, phase) => {
+            if (!docs.srs && !docs.hld) return;
+            const { saved, errors } = await saveArchitectDocs(projectPath, docs);
+            setDocsReady(true);
+            setDocsVersion(v => v + 1);
+            if (phase === PHASES.GENERATION) {
+              setPhase(PHASES.DONE);
+              setView(VIEW.SPLIT);
+              notifyAgentComplete('Architect');
+            }
+            if (saved.length > 0) {
+              addMessage('system', `[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
+            }
+            if (errors.length > 0) {
+              addMessage('system', `⚠️ Save errors: ${errors.join('; ')}`);
+            }
+
+            // Auto-follow-up: if only one doc was produced, ask for the missing one
+            const missingSRS = !docs.srs;
+            const missingHLD = !docs.hld;
+            if (missingSRS || missingHLD) {
+              const missingDoc = missingSRS ? 'SRS' : 'HLD';
+              const missingFence = missingSRS ? '```srs' : '```hld';
+              console.log(`[ARCHITECT:autoFollowUp] Missing ${missingDoc} — sending follow-up request`);
+              addMessage('system', `⏳ ${missingDoc} was not included — requesting it automatically...`);
+              // Schedule follow-up after streaming ends
+              setTimeout(() => {
+                sendToLLM(
+                  `You only produced the ${docs.srs ? 'SRS' : 'HLD'} document but NOT the ${missingDoc}. You MUST now output the complete ${missingDoc} wrapped in a ${missingFence} fence. Output ONLY the ${missingDoc} document now.`,
+                  PHASES.DONE,
+                  { showUserMsg: false }
+                );
+              }, 500);
+            }
+          };
+
           // Generation: extract and save docs (atomic save with merge)
           if (currentPhase === PHASES.GENERATION) {
             const docs = parseArchitectOutput(fullResponse);
             if (docs.srs || docs.hld) {
-              const { saved, errors } = await saveArchitectDocs(projectPath, docs);
-              setPhase(PHASES.DONE);
-              setDocsReady(true);
-              setDocsVersion(v => v + 1);
-              setView(VIEW.SPLIT);
-              if (saved.length > 0) {
-                addMessage('system', `[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
-              }
-              if (errors.length > 0) {
-                addMessage('system', `⚠️ Save errors: ${errors.join('; ')}`);
-              }
-              notifyAgentComplete('Architect');
+              await _handleDocSave(docs, PHASES.GENERATION);
             }
           }
 
           // Post-generation edits: if DONE and agent responds with doc fences, merge-update files
           if (currentPhase === PHASES.DONE) {
+            console.log(`[ARCHITECT:onDone] DONE phase — fullResponse length: ${fullResponse.length}, first 200: ${fullResponse.substring(0, 200)}`);
             const docs = parseArchitectOutput(fullResponse);
             if (docs.srs || docs.hld) {
-              const { saved, errors } = await saveArchitectDocs(projectPath, docs);
-              setDocsReady(true);
-              setDocsVersion(v => v + 1); // force DocumentPanel remount + reload from disk
-              if (saved.length > 0) {
-                addMessage('system', `[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
-              }
-              if (errors.length > 0) {
-                addMessage('system', `⚠️ Save errors: ${errors.join('; ')}`);
-              }
+              await _handleDocSave(docs, PHASES.DONE);
             }
           }
         },
