@@ -350,8 +350,13 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
   }, [projectPath, agentSettings, contextDocs, addMessage, updateLastAssistant, saveTaskPlan]);
 
   // ─── Auto-trigger generation ────────────────────────────────────────────
-  const triggerGeneration = useCallback(async () => {
-    const conversationMessages = buildDLConversationMessages(messagesRef.current, DL_PHASES.GENERATION, contextDocs);
+  const triggerGeneration = useCallback(async (initialUserMessage) => {
+    const history = [...messagesRef.current];
+    // If called with an initial user message (e.g. skipping discovery), inject it
+    if (initialUserMessage) {
+      history.push({ role: 'user', content: initialUserMessage });
+    }
+    const conversationMessages = buildDLConversationMessages(history, DL_PHASES.GENERATION, contextDocs);
     setIsStreaming(true);
     setTokenCount(0);
     addMessage('assistant', '');
@@ -626,7 +631,8 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
                       if (contextDocs && (contextDocs.srs || contextDocs.hld)) {
                         setPhase(DL_PHASES.GENERATION);
                         addMessage('system', 'All project documents loaded. Generating work plan...');
-                        setTimeout(() => triggerGeneration(), 500);
+                        const kickoff = 'Generate the complete detailed work plan based on all the project documents (SRS, HLD, and UI mockup). Output it using the incremental format with plan-header, phase, task, and plan-complete blocks.';
+                        setTimeout(() => triggerGeneration(kickoff), 500);
                       } else {
                         sendToLLM('Start working. Review the project documents and create a work plan.', phase, { showUserMsg: false });
                       }
