@@ -253,7 +253,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     if (!uiPath || !projectPath) return;
     const base = projectPath.replace(/[\\/]$/, '');
 
-    // Always generate an HTML code preview for the generated components.
+    // Always generate a live visual mockup preview for the generated components.
     // detectViteServer is NOT used here because it picks up OneManCrew's
     // own dev server on port 5173, not the target project's server.
     try {
@@ -268,29 +268,98 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         if (content) components.push({ name: f.name, content });
       }
 
-      // Build a preview HTML that shows the component code in a styled viewer
-      const componentList = components.map(c =>
-        `<div class="mb-6"><h2 class="text-lg font-semibold text-gray-200 mb-2 flex items-center gap-2"><span class="text-pink-400">●</span> ${c.name}</h2><pre class="bg-gray-900 rounded-lg p-4 overflow-x-auto text-sm text-gray-300 border border-gray-700"><code>${c.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre></div>`
-      ).join('\n');
+      // Read design tokens if available
+      let designTokensJson = '{}';
+      if (colorsPath) {
+        try {
+          const raw = await api.readFile(colorsPath);
+          if (raw) designTokensJson = raw;
+        } catch (e) { /* no tokens */ }
+      }
+
+      // Strip import/export statements so code works with CDN globals.
+      // Replace known imports with global references.
+      function prepareForBrowser(code, componentName) {
+        let c = code;
+        // Remove all import lines
+        c = c.replace(/^import\s+.*?['"]\s*;?\s*$/gm, '');
+        // Replace "export default function X" → "function X"
+        c = c.replace(/export\s+default\s+function\s+/g, 'function ');
+        // Replace "export default X" at end
+        c = c.replace(/export\s+default\s+\w+\s*;?\s*$/gm, '');
+        // Replace "export function" → "function"
+        c = c.replace(/export\s+function\s+/g, 'function ');
+        return c;
+      }
+
+      // Find the main entry component (AppShell or first non-index file)
+      const appShell = components.find(c => c.name.toLowerCase().includes('appshell'));
+      const indexFile = components.find(c => c.name.toLowerCase() === 'index.jsx' || c.name.toLowerCase() === 'index.tsx');
+      const mainComponent = appShell || components.find(c => c !== indexFile) || components[0];
+      const mainName = mainComponent.name.replace(/\.(jsx|tsx)$/, '');
+
+      // Build all component scripts (order: dependencies first, then main)
+      const orderedComponents = components.filter(c => c !== mainComponent && c !== indexFile);
+      orderedComponents.push(mainComponent); // main last so it can reference others
+
+      const componentScripts = orderedComponents.map(c => {
+        const prepared = prepareForBrowser(c.content, c.name.replace(/\.(jsx|tsx)$/, ''));
+        return `<script type="text/babel">\n${prepared}\n<\/script>`;
+      }).join('\n');
 
       const previewHtml = `<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>UI Components Preview</title>
+  <title>UI Mockup Preview</title>
   <script src="https://cdn.tailwindcss.com"><\/script>
-  <script>tailwindcss.config={darkMode:'class'}<\/script>
+  <script>tailwindcss.config={darkMode:'class',theme:{extend:{}}}<\/script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"><\/script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"><\/script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"><\/script>
+  <script crossorigin src="https://unpkg.com/framer-motion@11/dist/framer-motion.js"><\/script>
+  <script crossorigin src="https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.js"><\/script>
+  <style>
+    body { margin: 0; padding: 0; }
+    #preview-error { display: none; padding: 2rem; color: #f87171; font-family: monospace; white-space: pre-wrap; background: #1e1e1e; }
+  </style>
 </head>
-<body class="bg-gray-950 text-gray-100 p-8 font-sans">
-  <div class="max-w-4xl mx-auto">
-    <div class="mb-8 pb-4 border-b border-gray-800">
-      <h1 class="text-2xl font-bold text-white">Generated UI Components</h1>
-      <p class="text-sm text-gray-400 mt-1">${components.length} component(s) in src/components/generated_ui/</p>
-      <p class="text-xs text-gray-500 mt-2">To see a live interactive preview, start a Vite dev server in your target project and import these components.</p>
-    </div>
-    ${componentList}
-  </div>
+<body class="bg-gray-950">
+  <div id="root"></div>
+  <div id="preview-error"></div>
+
+  <script>
+    // Provide globals that the JSX code expects
+    const { useState, useEffect, useRef, useCallback, useMemo, Fragment } = React;
+    const { motion, AnimatePresence } = window["framer-motion"] || {};
+    // Lucide icons — expose all as globals
+    const lucideIcons = window.lucideReact || {};
+    Object.keys(lucideIcons).forEach(k => { if (!window[k]) window[k] = lucideIcons[k]; });
+    // Design tokens
+    const colors = ${designTokensJson};
+  <\/script>
+
+  ${componentScripts}
+
+  <script type="text/babel">
+    try {
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(React.createElement(${mainName}));
+    } catch (err) {
+      document.getElementById('preview-error').style.display = 'block';
+      document.getElementById('preview-error').textContent = 'Render error: ' + err.message + '\\n\\n' + err.stack;
+    }
+  <\/script>
+
+  <script>
+    // Catch Babel compilation errors
+    window.onerror = function(msg, src, line, col, err) {
+      var el = document.getElementById('preview-error');
+      el.style.display = 'block';
+      el.textContent = 'Error: ' + msg + '\\nLine: ' + line + '\\n\\n' + (err ? err.stack : '');
+    };
+  <\/script>
 </body>
 </html>`;
 
@@ -300,7 +369,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     } catch (err) {
       console.error('Failed to generate preview:', err);
     }
-  }, [uiPath, projectPath]);
+  }, [uiPath, projectPath, colorsPath]);
 
   const handleOpenPreview = useCallback(async () => {
     await previewComponents();
