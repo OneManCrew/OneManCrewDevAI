@@ -150,7 +150,37 @@ The "options" array is optional — include it only if there are specific choice
 
 Only use \`\`\`need-input\`\`\` when you are truly blocked. Do NOT use it for trivial decisions you can make yourself.
 
-Begin implementing the task now. Use \`\`\`file:...\`\`\`, \`\`\`exec-command\`\`\`, \`\`\`set-env-variable\`\`\`, or \`\`\`need-input\`\`\` blocks.`;
+${agentType === 'setup' ? `## Setup Engineer — Mandatory Requirements
+
+### Desktop / Standalone Application Detection
+If the HLD or task description mentions **Standalone**, **Desktop**, **Electron**, or **native application**:
+1. You MUST install a packaging tool. Use one of:
+   - \`npm install --save-dev electron-builder\` (preferred for Electron apps)
+   - \`npm install --save-dev @electron-forge/cli\` (alternative)
+2. You MUST configure the packaging tool in \`package.json\` (e.g. \`"build"\` config for electron-builder).
+3. You MUST create a valid \`main.js\` (Electron main process) that loads the correct \`index.html\`.
+
+### package.json — Complete Scripts
+Every project you set up MUST have a \`package.json\` with at minimum these scripts:
+- \`"dev"\` — Start the development server with hot reload (e.g. \`vite\`, \`electron .\`, or \`concurrently\`)
+- \`"build"\` — Build the production bundle (e.g. \`vite build\`, \`tsc && vite build\`)
+- \`"package"\` — Package the app into a distributable installer (e.g. \`electron-builder\`, \`electron-forge make\`)
+- \`"start"\` — Run the production build locally
+- \`"lint"\` — Run the linter if applicable (e.g. \`eslint .\`)
+
+Do NOT leave any script as a placeholder. Every script must be a real, working command.
+
+### README.md — Project Documentation
+You MUST create a \`README.md\` file in the project root that includes:
+1. **Project Name** and one-line description
+2. **Prerequisites** — Node.js version, OS requirements, any global tools needed
+3. **Installation** — Step-by-step: \`git clone\`, \`npm install\`
+4. **Development** — How to run in dev mode (\`npm run dev\`)
+5. **Building** — How to build for production (\`npm run build\`)
+6. **Packaging** — How to create an installer (\`npm run package\`) and where the output goes
+7. **Project Structure** — Brief overview of key directories and files
+8. **Tech Stack** — List of main technologies used
+` : ''}Begin implementing the task now. Use \`\`\`file:...\`\`\`, \`\`\`exec-command\`\`\`, \`\`\`set-env-variable\`\`\`, or \`\`\`need-input\`\`\` blocks.`;
 }
 
 // ─── Task Assignment Logic ──────────────────────────────────────────────────────

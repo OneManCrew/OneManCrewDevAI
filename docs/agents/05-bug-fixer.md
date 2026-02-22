@@ -97,13 +97,56 @@ debugging, root cause analysis, and software quality assurance across all
 technology stacks.
 
 Your job is to:
-1. Analyze the bug report and understand the root cause
-2. Create a structured bug ticket with all necessary details
-3. Determine which specialist agent should fix it
-4. Provide clear fix instructions
+1. Scan the project structure using the directory scan tool before proposing any fix
+2. Perform a Root Cause Analysis — explain WHY the bug happened before fixing it
+3. Create a structured bug ticket with all necessary details
+4. Determine which specialist agent should fix it
+5. Provide clear fix instructions
 ```
 
 The prompt lists all 6 available specialist agents and instructs the LLM to output structured bug reports.
+
+### Available Tools
+
+#### 1. Read Directory (Recursive)
+The Bug Fixer **must** scan the project directory before diagnosing any bug:
+```
+```read-directory
+{"path": ".", "maxDepth": 4}
+```​
+```
+- Returns the full file tree (ignores `node_modules`, `.git`, `dist`, etc.)
+- Uses `fs:readDirRecursive` IPC handler in `main.js`
+- **Mandatory** — must be used at least once before any bug report
+
+#### 2. Read File
+Inspect a specific file's contents:
+```
+```read-file
+{"path": "src/index.html"}
+```​
+```
+- Returns file content (truncated to 3000 chars to avoid context overflow)
+- Returns "File not found" if the file doesn't exist on disk
+
+### Mandatory: Root Cause Analysis
+
+Before outputting any `bug-report` block, the Bug Fixer **must** output a structured Root Cause Analysis:
+
+```
+### 🔍 Root Cause Analysis
+**Symptom:** What the user sees
+**Trace:** Chain of events leading to the bug
+**Root Cause:** The fundamental reason
+**Fix Approach:** What needs to change and why
+```
+
+### Auto-Install Permissions
+
+The Bug Fixer is authorized to include these install commands in fix instructions without asking:
+- `npm install --save-dev electron-builder` — if Electron project is missing a packaging tool
+- `npm install --save-dev electron` — if Electron is referenced but not installed
+- Any missing `devDependency` listed in the HLD or `package.json`
 
 ### Bug Report Output Format
 
@@ -148,6 +191,8 @@ The checkup message includes the full workplan (all phases, tasks, and acceptanc
 |------|------|-------------|
 | **Structured Questions** | LLM output format | ```` ```questions [...] ``` ```` — Renders interactive clickable option buttons in the UI |
 | **Bug Report** | LLM output format | ```` ```bug-report {...} ``` ```` — Structured bug ticket parsed by the UI |
+| **Read Directory** | LLM output format | ```` ```read-directory {...} ``` ```` — Scans project file tree recursively (mandatory before diagnosis) |
+| **Read File** | LLM output format | ```` ```read-file {...} ``` ```` — Reads a specific file's contents |
 
 ### Fix Execution Tools (delegated to Coding Agents)
 
@@ -164,11 +209,17 @@ Fix execution also benefits from the same infrastructure as Stage 4:
 - **Safe File Writes** — `FileLockManager` prevents concurrent writes
 - **Command Timeout** — 300s timeout with process tree kill on stuck commands
 
+## Analysis Flow (Tool Execution Loop)
+
+1. User describes a bug → LLM first outputs ```` ```read-directory ``` ```` to scan the project tree
+2. System executes tool blocks via `executeToolBlocks()` and injects results back as a follow-up message
+3. LLM continues analysis with real file data (up to **3 tool rounds**)
+4. LLM outputs **Root Cause Analysis** section, then ```` ```bug-report ``` ```` block(s)
+5. Bug reports are parsed by `parseBugReports()` and added to the bug list
+
 ## Fix Execution Flow
 
-1. User describes a bug → LLM analyzes and outputs ```` ```bug-report ``` ```` block(s)
-2. Bug reports are parsed by `parseBugReports()` and added to the bug list
-3. User triggers fix → `executeBugFix()` is called:
+1. User triggers fix → `executeBugFix()` is called:
    - Builds a task object from the bug report (title, description, root cause, fix instructions, affected files, acceptance criteria)
    - Assigns to the specialist agent specified in `bug.assignedAgent`
    - Delegates to `executeTask()` from `codingAgents.js` (same infrastructure as Stage 4)
@@ -192,6 +243,7 @@ Fix execution also benefits from the same infrastructure as Stage 4:
 
 | Function | Description |
 |----------|-------------|
+| `parseToolBlocks(output)` | Extract ```` ```read-directory ``` ```` and ```` ```read-file ``` ```` tool blocks from LLM output |
 | `parseBugReports(output)` | Extract all ```` ```bug-report ``` ```` JSON blocks from LLM output |
 | `stripBugReportBlocks(output)` | Remove bug-report blocks from text (for display) |
 | `buildBugFixerMessages(chatHistory, projectContext)` | Build conversation messages with project context |

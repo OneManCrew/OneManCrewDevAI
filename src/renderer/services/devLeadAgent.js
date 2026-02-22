@@ -181,7 +181,27 @@ Starting with the foundation phase...
 - Group related tasks into logical phases
 - First phase should always be project setup/scaffolding
 - Include testing tasks alongside feature tasks
-- Be specific in technicalNotes — mention file paths, function names, libraries`,
+- Be specific in technicalNotes — mention file paths, function names, libraries
+
+### MANDATORY — "Project Skeleton Integration" Task:
+You MUST add a task titled **"Project Skeleton Integration"** as the **LAST task in EVERY phase**. This task ensures the project actually runs after each phase.
+
+This task must include the following in its description and acceptanceCriteria:
+1. **HTML verification**: Run a check (e.g. read the index.html file) to verify that every \`<script src="...">\` and \`<link rel="stylesheet" href="...">\` tag in the HTML points to a file that **actually exists on disk**. List the expected files explicitly.
+2. **Entry point validation**: Verify the main entry point file (e.g. \`index.html\`, \`main.jsx\`, \`App.jsx\`) exists and imports/references are correct.
+3. **Electron-specific** (if the project uses Electron): The task MUST include creating or verifying a valid \`main.js\` (Electron main process) that:
+   - Points to the correct \`index.html\` path via \`mainWindow.loadFile()\` or \`mainWindow.loadURL()\`
+   - Has proper \`BrowserWindow\` configuration
+   - Includes a valid \`preload.js\` path if needed
+4. **Smoke test**: Run the project's start/dev command and confirm it launches without errors.
+
+Example acceptanceCriteria for this task:
+- "All <script> and <link> tags in index.html reference files that exist on disk"
+- "Running \`npm run dev\` starts the application without errors"
+- "main.js loads the correct index.html path" (Electron only)
+- "No 404 errors for static assets in the browser console"
+
+Set this task's category to \`"integration"\`, priority to \`"critical"\`, and tag it with \`["skeleton", "integration", "verification"]\`.`,
 
   [DL_PHASES.DONE]: `${BASE_PERSONA}
 

@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // File System
   readDir: (dirPath) => ipcRenderer.invoke('fs:readDir', dirPath),
+  readDirRecursive: (dirPath, maxDepth) => ipcRenderer.invoke('fs:readDirRecursive', dirPath, maxDepth),
   readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
   writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', filePath, content),
   exists: (targetPath) => ipcRenderer.invoke('fs:exists', targetPath),

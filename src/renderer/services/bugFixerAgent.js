@@ -51,13 +51,32 @@ const BUG_ANALYZER_PROMPT = `You are a senior Bug Fixer & QA Specialist with 30+
 
 ## Your Role
 You are the final stage in a software development pipeline. The user will describe bugs, issues, or problems they found in the generated code. Your job is to:
-1. Analyze the bug report and understand the root cause
-2. Create a structured bug ticket with all necessary details
-3. Determine which specialist agent should fix it
-4. Provide clear fix instructions
+1. **Scan the project structure** using the directory scan tool before proposing any fix
+2. Perform a **Root Cause Analysis** — explain WHY the bug happened before fixing it
+3. Create a structured bug ticket with all necessary details
+4. Determine which specialist agent should fix it
+5. Provide clear fix instructions
 
 ## Project Context
 {PROJECT_CONTEXT}
+
+## Available Tools
+
+### 1. Read Directory (Recursive)
+Before analyzing any bug, you MUST scan the project directory to understand the actual file layout. Output this block to request a recursive directory listing:
+\`\`\`read-directory
+{"path": ".", "maxDepth": 4}
+\`\`\`
+- \`path\` is relative to the project root. Use \`"."\` for the full project.
+- \`maxDepth\` controls how deep to scan (default: 4).
+- The system will return the full file tree. Use it to verify that paths referenced in code actually exist on disk.
+- **You MUST use this tool at least once before creating any bug report.** This prevents misdiagnosis caused by incorrect path assumptions.
+
+### 2. Read File
+To inspect a specific file's contents:
+\`\`\`read-file
+{"path": "src/index.html"}
+\`\`\`
 
 ## Available Specialist Agents
 - **Backend Engineer** (backend) — Server-side, API, database, business logic
@@ -67,8 +86,22 @@ You are the final stage in a software development pipeline. The user will descri
 - **Integration Engineer** (integration) — API clients, state management, data flow, wiring
 - **Setup Engineer** (setup) — Package management, build tools, project structure, installers
 
+## MANDATORY — Root Cause Analysis Step
+Before outputting any \`\`\`bug-report\`\`\` block, you MUST first output a **Root Cause Analysis** section in your response. This section must:
+1. **State the symptom** — What the user sees (e.g., "The app shows a blank white screen")
+2. **Trace the cause** — Walk through the chain of events that leads to the bug (e.g., "index.html references bundle.js at /dist/bundle.js, but the file was actually generated at /build/bundle.js")
+3. **Identify the root cause** — The fundamental reason (e.g., "The Vite config outputs to /build but the HTML template still uses the old /dist path from the webpack era")
+4. **Explain the fix approach** — What needs to change and why
+
+Format it as:
+### 🔍 Root Cause Analysis
+**Symptom:** ...
+**Trace:** ...
+**Root Cause:** ...
+**Fix Approach:** ...
+
 ## Output Format
-When the user describes a bug, analyze it and output a structured bug report as a JSON block:
+After the Root Cause Analysis, output a structured bug report as a JSON block:
 
 \`\`\`bug-report
 {
@@ -87,16 +120,63 @@ When the user describes a bug, analyze it and output a structured bug report as 
 }
 \`\`\`
 
+## Auto-Install Permissions
+You are authorized to include the following install commands in your fix instructions without asking the user:
+- \`npm install --save-dev electron-builder\` — if the project uses Electron and is missing a packaging/installer tool
+- \`npm install --save-dev electron\` — if Electron is referenced but not installed
+- Any missing \`devDependency\` listed in the HLD or package.json that was not installed during the coding phase
+
+When you detect a missing installer or build tool, include an \`exec-command\` block in your fix instructions so the coding agent installs it automatically.
+
 ## Rules
-1. Always output a \`\`\`bug-report\`\`\` JSON block when you identify a bug.
-2. You can output multiple bug reports if the user describes multiple issues.
-3. Be thorough in your root cause analysis.
-4. Assign to the most appropriate specialist agent.
-5. Provide clear, actionable fix instructions.
-6. If you need more information, ask the user before creating the bug report.
-7. After outputting the bug report, briefly explain your analysis to the user.
+1. **ALWAYS scan the directory tree first** using \`\`\`read-directory\`\`\` before diagnosing any bug.
+2. **ALWAYS output a Root Cause Analysis** before any \`\`\`bug-report\`\`\` block.
+3. Always output a \`\`\`bug-report\`\`\` JSON block when you identify a bug.
+4. You can output multiple bug reports if the user describes multiple issues.
+5. Be thorough in your root cause analysis — trace the actual file paths on disk.
+6. Assign to the most appropriate specialist agent.
+7. Provide clear, actionable fix instructions.
+8. If you need more information, ask the user before creating the bug report.
+9. After outputting the bug report, briefly explain your analysis to the user.
+10. When path mismatches are the issue, always reference the actual directory tree you scanned.
 
 ${ASK_USER_TOOL_INSTRUCTION}`;
+
+// ─── Tool Block Parser ──────────────────────────────────────────────────────────
+
+/**
+ * Parses ```read-directory and ```read-file tool blocks from the LLM output.
+ * Returns array of { type, path, maxDepth? }.
+ */
+export function parseToolBlocks(output) {
+  const tools = [];
+  const dirRegex = /```read-directory\s*\n([\s\S]*?)```/g;
+  const fileRegex = /```read-file\s*\n([\s\S]*?)```/g;
+  let match;
+
+  while ((match = dirRegex.exec(output)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1].trim());
+      tools.push({ type: 'read-directory', path: parsed.path || '.', maxDepth: parsed.maxDepth || 4 });
+    } catch {
+      // If not valid JSON, treat as plain path
+      const p = match[1].trim();
+      if (p) tools.push({ type: 'read-directory', path: p, maxDepth: 4 });
+    }
+  }
+
+  while ((match = fileRegex.exec(output)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1].trim());
+      if (parsed.path) tools.push({ type: 'read-file', path: parsed.path });
+    } catch {
+      const p = match[1].trim();
+      if (p) tools.push({ type: 'read-file', path: p });
+    }
+  }
+
+  return tools;
+}
 
 // ─── Bug Report Parser ──────────────────────────────────────────────────────────
 

@@ -154,6 +154,18 @@ The Dev Lead uses an **incremental output format** to prevent data loss from out
 
 The `IncrementalPlanBuilder` class parses these blocks in real-time during streaming and saves to disk after each block.
 
+### Mandatory: "Project Skeleton Integration" Task
+
+The Dev Lead **must** add a task titled **"Project Skeleton Integration"** as the **last task in every phase**. This ensures the project actually runs after each phase.
+
+The task must verify:
+1. **HTML verification** — Every `<script src="...">` and `<link rel="stylesheet" href="...">` in `index.html` points to a file that exists on disk
+2. **Entry point validation** — Main entry point (`index.html`, `main.jsx`, `App.jsx`) exists with correct imports
+3. **Electron-specific** — If the project uses Electron, must create/verify a valid `main.js` with correct `loadFile()`/`loadURL()` path, `BrowserWindow` config, and `preload.js`
+4. **Smoke test** — Run the project's start/dev command and confirm it launches without errors
+
+This task is always `category: "integration"`, `priority: "critical"`, tagged `["skeleton", "integration", "verification"]`.
+
 ### DONE Phase Prompt
 
 Allows modifications. Updated plan is output as a complete `` ```taskplan `` JSON block.

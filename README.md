@@ -25,11 +25,11 @@ OneManCrew Dev AI replaces an entire development team with a pipeline of special
 
 | Stage | Agent | What It Does |
 |-------|-------|-------------|
-| 1 | **🏗️ Architect** | Interviews you about requirements, generates SRS & HLD documents |
+| 1 | **🏗️ Architect** | Dominant & decisive — auto-decides tech stack, generates SRS & HLD (with Infrastructure Requirements) |
 | 2 | **🎨 UI Designer** | Creates React + Tailwind components with a full Design System (Lucide icons, Framer Motion animations, design tokens) |
 | 3 | **📋 Dev Lead** | Breaks the project into phases, tasks, and assigns specialist agents |
 | 4 | **💻 Coding Agents** | 6 specialist agents (Backend, Frontend, DevOps, QA, Integration, Setup) execute tasks in parallel |
-| 5 | **🐛 Bug Fixer** | Analyzes the codebase, identifies bugs, and dispatches fixes to the right specialist |
+| 5 | **🐛 Bug Fixer** | Scans project tree, performs Root Cause Analysis, identifies bugs, and dispatches fixes to the right specialist |
 
 Each agent has its own chat interface where you can interact, guide, and override decisions. The entire pipeline produces real files on disk — ready to run.
 
@@ -161,6 +161,7 @@ OneManCrewDevAI/
     │   ├── Sidebar.jsx              # Navigation sidebar
     │   ├── DocumentPanel.jsx        # SRS/HLD document viewer
     │   ├── ModelSelector.jsx        # Per-chat model selector
+    │   ├── TokenUsageBadge.jsx      # Token usage badge in TitleBar
     │   └── ...                      # Supporting UI components
     ├── services/
     │   ├── architectAgent.js        # Architect agent logic & prompts
@@ -170,6 +171,7 @@ OneManCrewDevAI/
     │   ├── bugFixerAgent.js         # Bug analysis & fix execution
     │   ├── llmProviders.js          # Multi-provider LLM abstraction
     │   ├── electronBridge.js        # Electron API bridge (with browser fallback)
+    │   ├── tokenUsageTracker.js     # Token usage tracking + cost estimation
     │   ├── notificationService.js   # Desktop notifications
     │   └── agentTools.js            # Shared agent tool definitions
     └── styles/
@@ -186,6 +188,7 @@ your-project/
 │   ├── SRS.md                       # Software Requirements Specification
 │   ├── HLD.md                       # High-Level Design document
 │   ├── context_summary.json         # Shared Knowledge Base (auto-updated)
+│   ├── project_knowledge.json       # Token usage data (persisted across sessions)
 │   └── dev-lead/
 │       ├── workplan.json            # Full task breakdown
 │       ├── coding-status.json       # Task execution status
@@ -247,12 +250,22 @@ Contributions are welcome! Here's how to get started:
 | **Shared Knowledge Base** | `docs/context_summary.json` — tracks all files, exports, technologies, entities (API routes, components, env vars), and LLM-generated task summaries; injected into every agent's prompt |
 | **Design System** | `src/theme/colors.json` design tokens created during UI Discovery; all components use Lucide React icons + Framer Motion animations |
 | **Stop-on-Failure** | Pauses execution when a critical task fails; asks user to continue or stop; marks downstream tasks as BLOCKED |
-| **Smart Preview** | Detects running Vite dev server (ports 5173/5174/3000/3001) for live preview, or generates a styled HTML code viewer as fallback |
+| **Smart Preview** | Detects running Vite dev server (ports 5173/5174/3000/3001) via native IPC probe for live preview, or generates a styled HTML code viewer as fallback |
+| **Token Usage Tracker** | Centralized tracking of input/output tokens + estimated cost across all LLM providers; per-agent breakdown; persisted to `project_knowledge.json`; compact TitleBar badge |
+| **.env Manager** | Coding agents can set environment variables via `set-env-variable` tool; supports `ASK_USER` flow for secrets; auto-masks sensitive keys in logs |
+| **Recursive Directory Scanner** | `fs:readDirRecursive` IPC handler for Bug Fixer to scan project tree before diagnosis (ignores `node_modules`, `.git`, `dist`) |
+| **Root Cause Analysis** | Bug Fixer must perform structured RCA (Symptom → Trace → Root Cause → Fix Approach) before creating any bug report |
+| **Setup Engineer Rules** | Mandatory `electron-builder` install for Desktop/Standalone apps; complete `package.json` scripts; `README.md` generation |
+| **Project Skeleton Integration** | Dev Lead adds mandatory integration verification task at end of every phase (HTML/script validation, Electron main.js, smoke test) |
 
 ## 📋 Roadmap
 
 - [x] ~~Agent memory across sessions~~ → Shared Knowledge Base (`context_summary.json`)
 - [x] ~~Automated testing pipeline~~ → Syntax validation + QualityGate
+- [x] ~~Token usage tracking~~ → Centralized tracker with per-agent breakdown + cost estimation
+- [x] ~~Environment variable management~~ → `.env` manager with `ASK_USER` flow for secrets
+- [x] ~~Dominant Architect~~ → Auto-decides tech stack, Infrastructure Requirements in HLD
+- [x] ~~Bug Fixer directory scanning~~ → Recursive project tree scan + Root Cause Analysis
 - [ ] Multi-language support
 - [ ] Git integration (auto-commit generated code)
 - [ ] Plugin system for custom agents

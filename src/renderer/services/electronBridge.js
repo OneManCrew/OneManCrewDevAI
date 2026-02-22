@@ -34,6 +34,7 @@ const mockAPI = {
     return true;
   },
   readDir: async () => [],
+  readDirRecursive: async () => { console.log('[mock] readDirRecursive'); return []; },
   readFile: async () => null,
   writeFile: async () => true,
   exists: async () => false,

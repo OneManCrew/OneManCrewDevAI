@@ -4,6 +4,7 @@ import {
   BF_PHASES, BUG_STATUS, BUG_SEVERITY,
   parseBugReports, stripBugReportBlocks, buildBugFixerMessages, buildCheckupMessage,
   executeBugFix, saveBugs, loadBugs, saveBugChatHistory, loadBugChatHistory,
+  parseToolBlocks,
 } from '../services/bugFixerAgent';
 import { AGENT_DEFINITIONS } from '../services/codingAgents';
 import api from '../services/electronBridge';
@@ -347,54 +348,113 @@ export default function BugFixerChat({ projectPath, settings, onUpdateSettings, 
     }
   }, [messages, historyLoaded, projectPath]);
 
+  // ─── Execute tool blocks (read-directory, read-file) from LLM output ──
+  const executeToolBlocks = useCallback(async (output) => {
+    const tools = parseToolBlocks(output);
+    if (tools.length === 0) return null;
+
+    const results = [];
+    for (const tool of tools) {
+      try {
+        if (tool.type === 'read-directory') {
+          const targetPath = tool.path === '.' ? projectPath : projectPath.replace(/[\\/]$/, '') + '/' + tool.path;
+          addLog(`📂 Scanning directory: ${tool.path} (depth: ${tool.maxDepth || 4})`, 'info');
+          const entries = await api.readDirRecursive(targetPath, tool.maxDepth || 4);
+          const tree = entries.map(e => `${e.type === 'dir' ? '📁' : '📄'} ${e.path}`).join('\n');
+          results.push(`## Directory Listing: ${tool.path}\n\`\`\`\n${tree || '(empty)'}\n\`\`\``);
+          addLog(`  Found ${entries.length} entries`, 'success');
+        } else if (tool.type === 'read-file') {
+          const filePath = projectPath.replace(/[\\/]$/, '') + '/' + tool.path;
+          addLog(`📄 Reading file: ${tool.path}`, 'info');
+          const content = await api.readFile(filePath);
+          if (content !== null) {
+            // Limit to 3000 chars to avoid context overflow
+            const truncated = content.length > 3000 ? content.substring(0, 3000) + '\n... (truncated)' : content;
+            results.push(`## File: ${tool.path}\n\`\`\`\n${truncated}\n\`\`\``);
+            addLog(`  Read ${content.length} chars`, 'success');
+          } else {
+            results.push(`## File: ${tool.path}\n**File not found on disk.**`);
+            addLog(`  File not found: ${tool.path}`, 'warning');
+          }
+        }
+      } catch (e) {
+        results.push(`## Tool Error (${tool.type}): ${e.message}`);
+        addLog(`Tool error: ${e.message}`, 'error');
+      }
+    }
+    return results.join('\n\n');
+  }, [projectPath, addLog]);
+
   // ─── Core: send a message (user or auto-generated) to the LLM ─────────
   const sendMessageCore = useCallback(async (userContent, isCheckup = false) => {
     if (isStreaming || !projectContext) return;
 
     const userMsg = { role: 'user', content: userContent };
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
+    let conversationMessages = [...messages, userMsg];
+    setMessages(conversationMessages);
     setInput('');
     setIsStreaming(true);
     setError(null);
     setPhase(BF_PHASES.ANALYZING);
     addLog(isCheckup ? 'Starting automatic checkup...' : 'Analyzing bug report...', 'info');
 
+    const MAX_TOOL_ROUNDS = 3;
+
     try {
-      const llmMessages = buildBugFixerMessages(newMessages, projectContext);
-      const provider = createLLMProvider(agentSettings);
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        const llmMessages = buildBugFixerMessages(conversationMessages, projectContext);
+        const provider = createLLMProvider(agentSettings);
 
-      let fullResponse = '';
+        let fullResponse = '';
 
-      await new Promise((resolve, reject) => {
-        provider.chat(llmMessages, agentSettings, {
-          onToken: (token) => {
-            fullResponse += token;
-            setMessages([...newMessages, { role: 'assistant', content: fullResponse }]);
-          },
-          onDone: (finalText) => {
-            fullResponse = finalText || fullResponse;
-            resolve(fullResponse);
-          },
-          onError: (err) => reject(err),
+        await new Promise((resolve, reject) => {
+          provider.chat(llmMessages, agentSettings, {
+            agentId: 'bug_fixer',
+            onToken: (token) => {
+              fullResponse += token;
+              setMessages([...conversationMessages, { role: 'assistant', content: fullResponse }]);
+            },
+            onDone: (finalText) => {
+              fullResponse = finalText || fullResponse;
+              resolve(fullResponse);
+            },
+            onError: (err) => reject(err),
+          });
         });
-      });
 
-      // Parse bug reports from the response
-      const newBugs = parseBugReports(fullResponse);
-      if (newBugs.length > 0) {
-        const updatedBugs = [...bugs, ...newBugs];
-        setBugs(updatedBugs);
-        await saveBugs(projectPath, updatedBugs);
-        addLog(`Found ${newBugs.length} bug(s)`, 'bug');
-        newBugs.forEach(b => addLog(`  🐛 ${b.title} [${b.severity}] → ${AGENT_DEFINITIONS[b.assignedAgent]?.name || b.assignedAgent}`, 'bug'));
-      } else {
-        addLog('No bugs found in response', 'success');
+        // Check for tool blocks that need execution
+        const toolResults = await executeToolBlocks(fullResponse);
+
+        // Update conversation with assistant response
+        conversationMessages = [...conversationMessages, { role: 'assistant', content: fullResponse }];
+
+        if (toolResults && round < MAX_TOOL_ROUNDS) {
+          // Inject tool results as a system-like user message and loop
+          addLog('Feeding tool results back to Bug Fixer...', 'info');
+          const toolMsg = { role: 'user', content: `Here are the results of your tool requests:\n\n${toolResults}\n\nNow continue your analysis with this information. Remember to perform a Root Cause Analysis before creating any bug reports.` };
+          conversationMessages = [...conversationMessages, toolMsg];
+          setMessages(conversationMessages);
+          continue;
+        }
+
+        // No more tools needed — finalize
+        // Parse bug reports from the response
+        const newBugs = parseBugReports(fullResponse);
+        if (newBugs.length > 0) {
+          const updatedBugs = [...bugs, ...newBugs];
+          setBugs(updatedBugs);
+          await saveBugs(projectPath, updatedBugs);
+          addLog(`Found ${newBugs.length} bug(s)`, 'bug');
+          newBugs.forEach(b => addLog(`  🐛 ${b.title} [${b.severity}] → ${AGENT_DEFINITIONS[b.assignedAgent]?.name || b.assignedAgent}`, 'bug'));
+        } else {
+          addLog('No bugs found in response', 'success');
+        }
+
+        break; // Done
       }
 
-      // Store final message
-      const finalMessages = [...newMessages, { role: 'assistant', content: fullResponse }];
-      setMessages(finalMessages);
+      // Store final messages
+      setMessages(conversationMessages);
       setPhase(BF_PHASES.READY);
       addLog('Analysis complete', 'success');
     } catch (err) {
@@ -405,7 +465,7 @@ export default function BugFixerChat({ projectPath, settings, onUpdateSettings, 
     } finally {
       setIsStreaming(false);
     }
-  }, [isStreaming, messages, projectContext, agentSettings, bugs, projectPath, addLog]);
+  }, [isStreaming, messages, projectContext, agentSettings, bugs, projectPath, addLog, executeToolBlocks]);
 
   // ─── Send user message ─────────────────────────────────────────────────
   const sendMessage = useCallback(async () => {

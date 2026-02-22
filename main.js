@@ -353,6 +353,30 @@ function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('fs:readDirRecursive', (_event, dirPath, maxDepth = 5) => {
+    const results = [];
+    const IGNORE = new Set(['node_modules', '.git', 'dist', '.next', '__pycache__', '.venv', 'venv', '.cache', 'coverage']);
+    function walk(dir, depth) {
+      if (depth > maxDepth) return;
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (IGNORE.has(entry.name)) continue;
+          const fullPath = path.join(dir, entry.name);
+          const relativePath = path.relative(dirPath, fullPath).replace(/\\/g, '/');
+          if (entry.isDirectory()) {
+            results.push({ path: relativePath, type: 'dir' });
+            walk(fullPath, depth + 1);
+          } else {
+            results.push({ path: relativePath, type: 'file' });
+          }
+        }
+      } catch { /* skip inaccessible dirs */ }
+    }
+    walk(dirPath, 0);
+    return results;
+  });
+
   ipcMain.handle('fs:readFile', (_event, filePath) => {
     try {
       return fs.readFileSync(filePath, 'utf-8');

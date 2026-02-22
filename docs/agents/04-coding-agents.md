@@ -10,8 +10,10 @@ The Coding Agents are the **fourth stage** in the pipeline. They receive the str
 
 | File | Role |
 |------|------|
-| `src/renderer/services/codingAgents.js` | Agent definitions, system prompts, task assignment, file/command extraction, orchestrator |
+| `src/renderer/services/codingAgents.js` | Agent definitions, system prompts, task assignment, file/command/env extraction, orchestrator |
+| `src/renderer/services/tokenUsageTracker.js` | Singleton token usage tracker — tracks input/output tokens, estimated cost, persists to `project_knowledge.json` |
 | `src/renderer/components/CodingPhase.jsx` | UI component (task board, progress tracking, agent chat modal) |
+| `src/renderer/components/TokenUsageBadge.jsx` | TitleBar badge showing total tokens used + estimated cost |
 
 ---
 
@@ -134,7 +136,20 @@ The coding agents have **three tools**, invoked via fenced code blocks in the LL
 - Commands are executed **in real-time** during streaming (via `IncrementalCommandExtractor`)
 - Results (exit code, stdout, stderr) are logged to the task log
 
-### 3. Request User Input
+### 3. Set Environment Variable
+```
+```set-env-variable
+{"key": "DATABASE_URL", "value": "postgresql://localhost:5432/mydb", "description": "PostgreSQL connection string"}
+```​
+```
+- Adds or updates a variable in the project's `.env` file
+- If the variable already exists, it is updated; otherwise appended
+- For **secrets/credentials** the user must provide: set `value` to `"ASK_USER"` — the system prompts the user to enter it
+- For **generated values** (ports, URLs, app names): set the value directly
+- Processed in real-time during streaming via `IncrementalEnvVarExtractor`
+- Sensitive keys (containing `key`, `secret`, `password`, `token`) are automatically masked in task logs
+
+### 4. Request User Input
 ```
 ```need-input
 {"question": "Your question here", "options": ["Option A", "Option B"]}
@@ -152,6 +167,17 @@ The coding agents have **three tools**, invoked via fenced code blocks in the LL
 4. Use modern best practices
 5. Install dependencies BEFORE writing code that uses them
 6. Do NOT output explanations outside of code blocks
+
+### Setup Engineer — Mandatory Requirements
+
+When `agentType === 'setup'`, the system prompt includes additional mandatory rules:
+
+1. **Desktop/Standalone Detection** — If the HLD mentions Standalone, Desktop, Electron, or native application:
+   - Must install `electron-builder` (preferred) or `@electron-forge/cli`
+   - Must configure the packaging tool in `package.json`
+   - Must create a valid `main.js` (Electron main process)
+2. **Complete `package.json` Scripts** — Must include: `dev`, `build`, `package`, `start`, `lint` — all real working commands
+3. **README.md** — Must create in project root with: project name, prerequisites, installation, development, building, packaging, project structure, tech stack
 
 ---
 
@@ -172,6 +198,7 @@ The orchestrator manages the execution of all tasks:
 3. As tokens stream in:
    - `IncrementalFileExtractor` detects completed ```` ```file:... ``` ```` blocks → writes to disk via `safeWriteFile` (with file locking)
    - `IncrementalCommandExtractor` detects completed ```` ```exec-command ``` ```` blocks → executes via sequential command queue (300s timeout)
+   - `IncrementalEnvVarExtractor` detects completed ```` ```set-env-variable ``` ```` blocks → writes to `.env` via IPC (supports `ASK_USER` flow for secrets)
    - `TaskLogger` writes real-time log entries to disk
 4. **Syntax Validation** — After each `.js`/`.jsx` file is written, runs `node --check` to validate syntax. If errors found, injects error back to LLM for auto-fix (max 2 retries)
 5. If ```` ```need-input ``` ```` is detected → pause, show modal to user, wait for response, continue (up to 5 turns)
@@ -252,8 +279,23 @@ All shell commands execute through a sequential `CommandQueue` in `main.js`:
 | `_buildTaskSummary(task, files, exports, tech, commands)` | Deterministic natural-language task summary (fallback) |
 | `IncrementalFileExtractor.update(fullOutput)` | Streaming file block detection |
 | `IncrementalCommandExtractor.update(fullOutput)` | Streaming command block detection |
-| `TaskLogger` | Per-task real-time disk logger (includes `qualityGate`, `blocked`, `failureDecision` methods) |
+| `IncrementalEnvVarExtractor.update(fullOutput)` | Streaming env variable block detection |
+| `extractEnvVarsFromOutput(output)` | Parse all `set-env-variable` blocks from LLM output |
+| `TaskLogger` | Per-task real-time disk logger (includes `qualityGate`, `envVarSet`, `blocked`, `failureDecision` methods) |
 | `CodingOrchestrator` | Main orchestrator: batch execution, Stop-on-Failure, shared knowledge updates |
 | `CodingOrchestrator._generateLLMSummary()` | LLM-generated 2-sentence task summary (files + API/Props) |
 | `CodingOrchestrator._generateEntityIndex()` | LLM-generated structured entity extraction (functions, components, API routes, env vars) |
 | `CodingOrchestrator._updateContextSummary()` | Merges task results into `context_summary.json` |
+
+---
+
+## Token Usage Tracker
+
+All LLM calls across all agents are tracked by a centralized `tokenUsageTracker.js` singleton:
+
+- **Automatic** — Hooked into all 3 LLM providers (OpenAI, Anthropic, Gemini) at the provider level
+- **Per-agent breakdown** — Tracks input/output tokens and estimated cost per agent
+- **Cost estimation** — Approximate cost tables for GPT-4o, Claude, Gemini models (fallback for unknown models)
+- **Persistence** — Saves to `{projectPath}/docs/project_knowledge.json` after every call
+- **UI** — `TokenUsageBadge` component in the TitleBar shows total tokens + estimated cost, expandable to per-agent breakdown
+- **Reset** — User can reset all usage data from the badge dropdown
