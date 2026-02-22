@@ -318,7 +318,6 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"><\/script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"><\/script>
   <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"><\/script>
-  <script crossorigin src="https://unpkg.com/framer-motion@11/dist/framer-motion.js"><\/script>
   <script crossorigin src="https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.js"><\/script>
   <style>
     body { margin: 0; padding: 0; }
@@ -331,11 +330,29 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
 
   <script>
     // Provide globals that the JSX code expects
-    const { useState, useEffect, useRef, useCallback, useMemo, Fragment } = React;
-    const { motion, AnimatePresence } = window["framer-motion"] || {};
+    const { useState, useEffect, useRef, useCallback, useMemo, Fragment, forwardRef } = React;
+
+    // motion shim — renders plain HTML elements (no animations needed for mockup)
+    const _motionHandler = {
+      get(_, tag) {
+        return forwardRef(function MotionShim(props, ref) {
+          const clean = Object.assign({}, props);
+          // Strip framer-motion specific props
+          ['initial','animate','exit','transition','whileHover','whileTap','whileFocus',
+           'whileDrag','whileInView','variants','layout','layoutId','drag','dragConstraints',
+           'onAnimationComplete','onAnimationStart'].forEach(function(k){ delete clean[k]; });
+          clean.ref = ref;
+          return React.createElement(tag, clean);
+        });
+      }
+    };
+    const motion = new Proxy({}, _motionHandler);
+    const AnimatePresence = function(props) { return props.children || null; };
+
     // Lucide icons — expose all as globals
     const lucideIcons = window.lucideReact || {};
-    Object.keys(lucideIcons).forEach(k => { if (!window[k]) window[k] = lucideIcons[k]; });
+    Object.keys(lucideIcons).forEach(function(k) { if (!window[k]) window[k] = lucideIcons[k]; });
+
     // Design tokens
     const colors = ${designTokensJson};
   <\/script>
