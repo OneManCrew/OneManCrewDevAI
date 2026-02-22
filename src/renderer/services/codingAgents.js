@@ -425,7 +425,7 @@ async function _runLLMCall(messages, settings, callbacks = {}) {
  * @param {string} projectPath — root path where files are saved (files go to projectPath/src/...)
  */
 export async function executeTask(task, projectContext, settings, callbacks = {}, projectPath = '') {
-  const { onToken, onProgress, onComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onCommandQueued, onSyntaxError } = callbacks;
+  const { onToken, onProgress, onComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onCommandQueued, onSyntaxError, onSyntaxRetry } = callbacks;
   const agentType = task.assignedAgent || AGENT_TYPES.BACKEND;
 
   const systemPrompt = buildAgentSystemPrompt(agentType, task, projectContext);
@@ -439,6 +439,7 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
   let allOutput = '';
   const allFiles = [];
   const allCommands = [];
+  let syntaxErrors = []; // Collects syntax errors per turn for auto-retry
 
   // Incremental extractors for real-time processing
   const fileExtractor = new IncrementalFileExtractor();
@@ -472,6 +473,7 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
           const validation = await _validateSyntax(fullPath, projectPath);
           if (!validation.valid) {
             console.warn(`[codingAgents] Syntax error in ${file.path}:`, validation.error);
+            syntaxErrors.push({ file, error: validation.error });
             if (onSyntaxError) onSyntaxError(file, validation.error);
           }
         } catch (e) {
@@ -486,10 +488,17 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
       allCommands.push(cmd);
       try {
         if (onCommandQueued) onCommandQueued(cmd);
-        const result = await api.execCommandQueued({
-          command: cmd.command,
-          cwd: projectPath || undefined,
-        });
+        // 5-minute timeout — if the queued command doesn't return, release with error
+        const QUEUE_TIMEOUT_MS = 5 * 60 * 1000;
+        const result = await Promise.race([
+          api.execCommandQueued({
+            command: cmd.command,
+            cwd: projectPath || undefined,
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Queue timeout: command did not complete within 5 minutes — ${cmd.command}`)), QUEUE_TIMEOUT_MS)
+          ),
+        ]);
         if (onCommandExecuted) onCommandExecuted(cmd, result);
       } catch (e) {
         console.warn(`[codingAgents] Command failed: ${cmd.command}`, e);
@@ -518,6 +527,18 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
       enqueueProcessing(allOutput);
       await drainQueue();
 
+      // Check for syntax errors — if any, inject fix prompt and re-run
+      if (syntaxErrors.length > 0) {
+        const errorSummary = syntaxErrors.map(e =>
+          `- **${e.file.path}**: ${e.error}`
+        ).join('\n');
+        const fixPrompt = `The code you just wrote has syntax errors. Please fix them and output the full corrected file(s) again using \`\`\`file:...\`\`\` blocks.\n\nSyntax errors found:\n${errorSummary}`;
+        messages.push({ role: 'user', content: fixPrompt });
+        if (onSyntaxRetry) onSyntaxRetry(syntaxErrors);
+        syntaxErrors = []; // Reset for next turn
+        continue;
+      }
+
       // Check if agent needs user input
       const needInput = detectNeedInput(rawOutput);
       if (needInput && onNeedInput) {
@@ -528,7 +549,7 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
         }
       }
 
-      // Done
+      // Done — no syntax errors, no need-input
       if (onProgress) onProgress(100);
       if (onComplete) onComplete({ files: allFiles, commands: allCommands, rawOutput: allOutput, tokenCount });
       return { rawOutput: allOutput };
@@ -609,8 +630,16 @@ export class TaskLogger {
     this._flush(`   ${error}`);
   }
 
+  syntaxRetry(errors) {
+    this._flush(`[${this._ts()}] 🔄 SYNTAX FIX RETRY: Sending ${errors.length} error(s) back to agent for correction`);
+    for (const e of errors) {
+      this._flush(`   - ${e.file.path}: ${e.error.substring(0, 200)}`);
+    }
+  }
+
   commandQueued(cmd) {
-    this._flush(`[${this._ts()}] ⏳ WAITING IN QUEUE: ${cmd.command}`);
+    this._flush(`[${this._ts()}] [QUEUE] Task is waiting for terminal access...`);
+    this._flush(`   Command: ${cmd.command}`);
     if (cmd.description && cmd.description !== cmd.command) {
       this._flush(`   Description: ${cmd.description}`);
     }
@@ -801,6 +830,10 @@ export class CodingOrchestrator {
         },
         onSyntaxError: (file, error) => {
           logger.syntaxError(file, error);
+          this.onTaskUpdate(task, this.executionPlan);
+        },
+        onSyntaxRetry: (errors) => {
+          logger.syntaxRetry(errors);
           this.onTaskUpdate(task, this.executionPlan);
         },
         onCommandQueued: (cmd) => {
