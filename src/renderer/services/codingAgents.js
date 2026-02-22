@@ -750,6 +750,37 @@ function _extractContextFromFiles(files) {
   return { exports, technologies: [...techSet] };
 }
 
+/**
+ * Builds a concise natural-language summary of what a task produced.
+ */
+function _buildTaskSummary(task, files, exports, technologies, commands) {
+  const parts = [];
+
+  // Sentence 1: what was built
+  if (files.length > 0) {
+    const names = files.slice(0, 5).map(f => f.path.split('/').pop()).join(', ');
+    parts.push(`Created ${files.length} file(s): ${names}${files.length > 5 ? '...' : ''}.`);
+  }
+
+  // Sentence 2: key exports and tech
+  const exportNames = exports.slice(0, 6).map(e => e.name);
+  if (exportNames.length > 0 || technologies.length > 0) {
+    let s = '';
+    if (exportNames.length > 0) s += `Key exports: ${exportNames.join(', ')}${exports.length > 6 ? '...' : ''}`;
+    if (technologies.length > 0) s += `${s ? '. ' : ''}Using ${technologies.join(', ')}`;
+    parts.push(s + '.');
+  }
+
+  // Sentence 3: installed packages
+  const installs = (commands || []).filter(c => c.command && /npm install|yarn add|pip install/.test(c.command));
+  if (installs.length > 0) {
+    const pkgs = installs.map(c => c.command.replace(/^(npm install|yarn add|pip install)\s+/i, '').trim()).join(', ');
+    parts.push(`Installed: ${pkgs}.`);
+  }
+
+  return parts.join(' ') || `Completed task: ${task.title}.`;
+}
+
 // ─── Orchestrator ───────────────────────────────────────────────────────────────
 
 /**
@@ -968,12 +999,16 @@ export class CodingOrchestrator {
       const techSet = new Set([...summary.technologies, ...newTech]);
       summary.technologies = [...techSet];
 
+      // Build natural-language summary
+      const taskSummary = _buildTaskSummary(task, files, newExports, newTech, task.commands);
+
       // Track completed task
       summary.completedTasks.push({
         id: task.id,
         title: task.title,
         agent: task.assignedAgent,
         filesWritten: files.map(f => f.path),
+        summary: taskSummary,
       });
 
       summary.updatedAt = new Date().toISOString();
