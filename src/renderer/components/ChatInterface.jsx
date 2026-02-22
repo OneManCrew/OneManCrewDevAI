@@ -13,6 +13,7 @@ import DocumentPanel, { checkExistingDocs } from './DocumentPanel';
 import MultiQuestionReply, { parseQuestions, stripQuestionsBlock } from './QuickReply';
 import ModelSelector from './ModelSelector';
 import { notifyAgentComplete, notifyAgentError, notifyUserAttentionNeeded } from '../services/notificationService';
+import log from '../services/logger';
 
 // ─── Phase colors ──────────────────────────────────────────────────────────────
 const PHASE_COLORS = {
@@ -29,6 +30,8 @@ const PHASE_ORDER = [PHASES.DISCOVERY, PHASES.ANALYSIS, PHASES.CONFIRM, PHASES.G
 const VIEW = { CHAT: 'chat', DOCS: 'docs', SPLIT: 'split' };
 
 export default function ChatInterface({ projectPath, settings, onUpdateSettings, onOpenProject, onNext }) {
+  log.info('ChatInterface', 'Component render', { projectPath, provider: settings?.provider });
+  if (projectPath) log.setProjectPath(projectPath);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -57,6 +60,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
   const pendingFollowUpKeyRef = useRef(null); // tracks which doc key ('srs'|'hld') the auto-follow-up is fetching
   useEffect(() => {
     if (prevPathRef.current && prevPathRef.current !== projectPath) {
+      log.info('ChatInterface', 'Project path changed — resetting state', { from: prevPathRef.current, to: projectPath });
       pathStableRef.current = false;
       setMessages([]);
       setInput('');
@@ -109,12 +113,14 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
   // ─── Restore chat history on mount ──────────────────────────────────────
   useEffect(() => {
     if (!chatHistoryPath || historyLoaded) return;
+    log.info('ChatInterface', 'Restoring chat history', { chatHistoryPath });
     (async () => {
       try {
         const raw = await api.readFile(chatHistoryPath);
         if (raw) {
           const saved = JSON.parse(raw);
           if (saved.messages && saved.messages.length > 0) {
+            log.info('ChatInterface', 'History restored', { messageCount: saved.messages.length, phase: saved.phase, docsReady: saved.docsReady });
             setMessages(saved.messages);
             if (saved.phase) setPhase(saved.phase);
             if (saved.docsReady) setDocsReady(true);
@@ -124,8 +130,9 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             return;
           }
         }
+        log.info('ChatInterface', 'No history found or empty');
       } catch (e) {
-        console.warn('Failed to restore architect chat history:', e);
+        log.error('ChatInterface', 'Failed to restore chat history', e);
       }
       setHistoryLoaded(true);
     })();
@@ -150,8 +157,10 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
   // ─── Check for existing docs on mount (resume support) ───────────────────
   useEffect(() => {
     if (!projectPath || resumeChecked) return;
+    log.info('ChatInterface', 'Checking for existing docs', { projectPath });
     (async () => {
       const { hasDocs, srs, hld } = await checkExistingDocs(projectPath);
+      log.info('ChatInterface', 'Existing docs check result', { hasDocs, srsLen: srs?.length || 0, hldLen: hld?.length || 0 });
       if (hasDocs) {
         setDocsReady(true);
         setPhase(PHASES.DONE);
@@ -187,12 +196,16 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
 
   // ─── Core LLM send ──────────────────────────────────────────────────────
   const sendToLLM = useCallback(async (userMessage, currentPhase, { showUserMsg = true } = {}) => {
+    log.info('sendToLLM', 'CALLED', { phase: currentPhase, showUserMsg, msgLen: userMessage.length, provider: agentSettings?.provider, model: agentSettings?.selectedModel });
     setError(null);
     if (showUserMsg) addMessage('user', userMessage);
 
     const allMessages = [...messagesRef.current];
-    if (showUserMsg) allMessages.push({ role: 'user', content: userMessage });
+    // Always include the user message in the LLM conversation, even if not shown in UI
+    allMessages.push({ role: 'user', content: userMessage });
     const conversationMessages = buildConversationMessages(allMessages, currentPhase, projectPath);
+    const totalChars = conversationMessages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
+    log.info('sendToLLM', 'Conversation built', { messageCount: conversationMessages.length, totalChars, lastRole: conversationMessages[conversationMessages.length - 1]?.role });
 
     setIsStreaming(true);
     if (currentPhase === PHASES.GENERATION) setTokenCount(0);
@@ -200,17 +213,23 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
 
     try {
       const provider = createLLMProvider(agentSettings);
+      log.info('sendToLLM', 'Provider created, calling chat()', { providerType: provider.constructor.name });
       let fullResponse = '';
+      let tokenCount_ = 0;
 
       await provider.chat(conversationMessages, agentSettings, {
         onToken: (token) => {
           fullResponse += token;
+          tokenCount_++;
+          if (tokenCount_ === 1) log.info('sendToLLM', 'First token received', { tokenLen: token.length });
+          if (tokenCount_ % 100 === 0) log.debug('sendToLLM', `Token progress: ${tokenCount_} tokens, ${fullResponse.length} chars`);
           updateLastAssistant(fullResponse);
           if (currentPhase === PHASES.GENERATION) {
             setTokenCount((c) => c + 1);
           }
         },
         onDone: async (finalText) => {
+          log.info('sendToLLM', 'onDone fired', { finalTextLen: finalText?.length, fullResponseLen: fullResponse.length, totalTokens: tokenCount_ });
           fullResponse = finalText || fullResponse;
           updateLastAssistant(fullResponse);
 
@@ -296,14 +315,17 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
           }
         },
         onError: (err) => {
+          log.error('sendToLLM', 'onError fired', { message: err.message, stack: err.stack });
           setError(err.message || 'An error occurred.');
           notifyAgentError('Architect', err.message);
         },
       });
     } catch (err) {
+      log.error('sendToLLM', 'CATCH block — provider.chat threw', { message: err.message, stack: err.stack });
       setError(err.message || 'Failed to connect to the LLM provider.');
       notifyAgentError('Architect', err.message);
     } finally {
+      log.info('sendToLLM', 'FINALLY — setIsStreaming(false)');
       setIsStreaming(false);
     }
   }, [projectPath, agentSettings, addMessage, updateLastAssistant]);
@@ -366,7 +388,8 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
 
   // ─── Handle user send ────────────────────────────────────────────────────
   const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
+    log.info('handleSend', 'Called', { inputLen: input.trim().length, isStreaming, phase, projectPath: !!projectPath });
+    if (!input.trim() || isStreaming) { log.warn('handleSend', 'Blocked', { emptyInput: !input.trim(), isStreaming }); return; }
     if (!projectPath) { setError('Select a project workspace first.'); return; }
 
     const userMessage = input.trim();
@@ -397,6 +420,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
 
   // ─── Approval handlers ───────────────────────────────────────────────────
   const handleApprove = async () => {
+    log.info('handleApprove', 'Called', { isStreaming, phase });
     if (isStreaming) return;
     setPhase(PHASES.GENERATION);
     addMessage('system', `Phase: ${PHASE_LABELS[PHASES.CONFIRM]} → ${PHASE_LABELS[PHASES.GENERATION]}`);

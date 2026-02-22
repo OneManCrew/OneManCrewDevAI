@@ -8,6 +8,7 @@
  */
 
 import { ASK_USER_TOOL_INSTRUCTION } from './agentTools';
+import log from './logger';
 import api from './electronBridge';
 
 // ─── Phases ────────────────────────────────────────────────────────────────────
@@ -324,7 +325,7 @@ export function parseArchitectOutput(text) {
   result.srs = _extractFencedBlock(text, 'srs');
   result.hld = _extractFencedBlock(text, 'hld');
 
-  console.log(`[ARCHITECT:parse] Fenced extraction — SRS: ${result.srs ? result.srs.length + ' chars' : 'null'}, HLD: ${result.hld ? result.hld.length + ' chars' : 'null'}`);
+  log.info('parseArchitectOutput', 'Fenced extraction', { srs: result.srs ? result.srs.length : null, hld: result.hld ? result.hld.length : null });
 
   // Fallback: if no fences found, detect by heading and extract full content.
   // This handles cases where the LLM outputs the document as plain markdown
@@ -337,7 +338,7 @@ export function parseArchitectOutput(text) {
       if (hldSplit) content = hldSplit[1].trim();
       if (content.length > 200) result.srs = content;
     }
-    console.log(`[ARCHITECT:parse] Fallback SRS: ${result.srs ? result.srs.length + ' chars' : 'null'}`);
+    log.info('parseArchitectOutput', 'Fallback SRS', { srs: result.srs ? result.srs.length : null });
   }
 
   if (!result.hld) {
@@ -346,10 +347,10 @@ export function parseArchitectOutput(text) {
       let content = hldHeadingMatch[1].trim();
       if (content.length > 200) result.hld = content;
     }
-    console.log(`[ARCHITECT:parse] Fallback HLD: ${result.hld ? result.hld.length + ' chars' : 'null'}`);
+    log.info('parseArchitectOutput', 'Fallback HLD', { hld: result.hld ? result.hld.length : null });
   }
 
-  console.log(`[ARCHITECT:parse] Final — SRS: ${result.srs ? result.srs.length + ' chars' : 'null'}, HLD: ${result.hld ? result.hld.length + ' chars' : 'null'}`);
+  log.info('parseArchitectOutput', 'Final result', { srs: result.srs ? result.srs.length : null, hld: result.hld ? result.hld.length : null });
   return result;
 }
 
@@ -428,8 +429,7 @@ export async function saveArchitectDocs(projectPath, docs, { onlyKeys = null } =
   const saved = [];
   const errors = [];
 
-  console.log(`[ARCHITECT:save] projectPath=${projectPath}, docsPath=${docsPath}, onlyKeys=${onlyKeys}`);
-  console.log(`[ARCHITECT:save] SRS: ${docs.srs ? docs.srs.length + ' chars' : 'null'}, HLD: ${docs.hld ? docs.hld.length + ' chars' : 'null'}`);
+  log.info('saveArchitectDocs', 'Called', { projectPath, docsPath, onlyKeys, srs: docs.srs ? docs.srs.length : null, hld: docs.hld ? docs.hld.length : null });
 
   for (const [key, filename] of [['srs', 'SRS.md'], ['hld', 'HLD.md']]) {
     if (!docs[key]) continue;
@@ -440,40 +440,40 @@ export async function saveArchitectDocs(projectPath, docs, { onlyKeys = null } =
     try {
       // Read existing content for merge
       const existing = await api.readFile(filePath).catch(() => null);
-      console.log(`[ARCHITECT:save] ${filename}: existing=${existing ? existing.length + ' chars' : 'null'}, new=${docs[key].length} chars`);
+      log.info('saveArchitectDocs', `${filename}: read existing`, { existing: existing ? existing.length : null, new: docs[key].length });
 
       // Merge new content with existing
       const merged = _mergeDocument(existing, docs[key]);
-      console.log(`[ARCHITECT:save] ${filename}: merged=${merged.length} chars, writing to: ${filePath}`);
+      log.info('saveArchitectDocs', `${filename}: merged`, { merged: merged.length, filePath });
 
       // Write to disk — prefer safeWriteFile (creates dirs), fall back to writeFile
       const hasSafe = typeof api.safeWriteFile === 'function';
-      console.log(`[ARCHITECT:save] ${filename}: using ${hasSafe ? 'safeWriteFile' : 'writeFile'}`);
+      log.info('saveArchitectDocs', `${filename}: writing`, { method: hasSafe ? 'safeWriteFile' : 'writeFile' });
       const writeResult = hasSafe
         ? await api.safeWriteFile(filePath, merged)
         : await api.writeFile(filePath, merged);
-      console.log(`[ARCHITECT:save] ${filename}: writeResult=${JSON.stringify(writeResult)}`);
+      log.info('saveArchitectDocs', `${filename}: writeResult`, { writeResult });
 
       // Verify the write succeeded by reading back
       const verification = await api.readFile(filePath).catch(() => null);
-      console.log(`[ARCHITECT:save] ${filename}: verification read=${verification ? verification.length + ' chars' : 'null'}`);
+      log.info('saveArchitectDocs', `${filename}: verification`, { verificationLen: verification ? verification.length : null });
       if (verification && verification.length > 0) {
         saved.push(filename);
       } else {
         errors.push(`${filename}: write succeeded but verification read returned empty`);
       }
     } catch (e) {
-      console.error(`[ARCHITECT:save] ${filename}: EXCEPTION:`, e);
+      log.error('saveArchitectDocs', `${filename}: EXCEPTION`, e);
       errors.push(`${filename}: ${e.message}`);
     }
   }
 
   // Log verification message
   if (saved.length > 0) {
-    console.log(`[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
+    log.info('saveArchitectDocs', 'Saved to disk', { saved });
   }
   if (errors.length > 0) {
-    console.warn(`[ARCHITECT] Save errors: ${errors.join('; ')}`);
+    log.error('saveArchitectDocs', 'Save errors', { errors });
   }
 
   return { saved, errors };
