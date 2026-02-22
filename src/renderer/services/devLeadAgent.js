@@ -410,39 +410,175 @@ export class IncrementalPlanBuilder {
 export function parseDevLeadOutput(text) {
   const result = { taskPlan: null, truncated: false };
 
-  // Find the start of the JSON object — look for { after a fence or standalone
-  // The text may contain nested ``` inside JSON string values, so regex-based
-  // fence extraction is unreliable. Instead, find the first '{' that is followed
-  // by "phases" somewhere, and use string-aware brace tracking.
+  // Strategy 1: Extract JSON object from text
   const jsonContent = extractJSONObject(text);
-  if (!jsonContent) return result;
-
-  // Try parsing as-is first
-  try {
-    const parsed = JSON.parse(jsonContent);
-    if (parsed && (parsed.phases || parsed.tasks)) {
-      result.taskPlan = parsed;
-      return result;
-    }
-  } catch (e) { /* try salvaging */ }
-
-  // Salvage truncated JSON: close open brackets/braces
-  const salvaged = salvageTruncatedJSON(jsonContent);
-  if (salvaged) {
+  if (jsonContent) {
+    // Try parsing as-is first
     try {
-      const parsed = JSON.parse(salvaged);
+      const parsed = JSON.parse(jsonContent);
       if (parsed && (parsed.phases || parsed.tasks)) {
         result.taskPlan = parsed;
-        result.truncated = true;
         return result;
       }
-    } catch (e) {
-      console.warn('Failed to parse even after salvage:', e.message?.substring(0, 100));
+    } catch (e) { /* try salvaging */ }
+
+    // Salvage truncated JSON: close open brackets/braces
+    const salvaged = salvageTruncatedJSON(jsonContent);
+    if (salvaged) {
+      try {
+        const parsed = JSON.parse(salvaged);
+        if (parsed && (parsed.phases || parsed.tasks)) {
+          result.taskPlan = parsed;
+          result.truncated = true;
+          return result;
+        }
+      } catch (e) {
+        console.warn('Failed to parse even after salvage:', e.message?.substring(0, 100));
+      }
     }
   }
 
-  result.taskPlanRaw = jsonContent;
+  // Strategy 2: Parse markdown-formatted work plan (local models often output this)
+  const mdPlan = parseMarkdownWorkplan(text);
+  if (mdPlan && mdPlan.phases && mdPlan.phases.length > 0) {
+    result.taskPlan = mdPlan;
+    return result;
+  }
+
+  if (jsonContent) result.taskPlanRaw = jsonContent;
   return result;
+}
+
+/**
+ * Parses a markdown-formatted work plan into the expected JSON schema.
+ * Handles formats like:
+ *   ### Phase 1: Name
+ *   #### Task 1.1: Title
+ *   **Description:** ...
+ *   **Duration:** 2 days
+ *   **Dependencies:** Task 1.1
+ *   **Deliverables:** / **Status:**
+ */
+function parseMarkdownWorkplan(text) {
+  // Check if this looks like a markdown work plan (has phase/task headers)
+  if (!text.match(/###?\s+(?:Phase|Task)\s/i)) return null;
+
+  const lines = text.split('\n');
+  const plan = { projectName: '', phases: [] };
+
+  // Try to extract project title from **Project Title:** or first # heading
+  const titleMatch = text.match(/\*\*Project\s+Title:\*\*\s*(.+)/i) || text.match(/^#\s+(.+)/m);
+  if (titleMatch) plan.projectName = titleMatch[1].trim();
+
+  let currentPhase = null;
+  let currentTask = null;
+  let collectingField = null; // which multi-line field we're collecting (e.g. 'deliverables')
+
+  function flushTask() {
+    if (currentTask && currentPhase) {
+      currentPhase.tasks.push(currentTask);
+      currentTask = null;
+    }
+    collectingField = null;
+  }
+
+  function flushPhase() {
+    flushTask();
+    if (currentPhase) {
+      plan.phases.push(currentPhase);
+      currentPhase = null;
+    }
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Phase header: ### Phase 1: Name  or  ## Phase 1: Name
+    const phaseMatch = trimmed.match(/^#{2,3}\s+Phase\s*\d*[:.]\s*(.+)/i);
+    if (phaseMatch) {
+      flushPhase();
+      currentPhase = {
+        name: phaseMatch[1].trim(),
+        description: '',
+        tasks: [],
+      };
+      collectingField = null;
+      continue;
+    }
+
+    // Task header: #### Task 1.1: Title  or  #### Task 1.1 — Title
+    const taskMatch = trimmed.match(/^#{3,4}\s+Task\s*[\d.]+[:.—\-]\s*(.+)/i);
+    if (taskMatch) {
+      flushTask();
+      currentTask = {
+        title: taskMatch[1].trim(),
+        description: '',
+        dependencies: [],
+        acceptanceCriteria: [],
+        technicalNotes: '',
+        estimatedHours: 0,
+      };
+      collectingField = null;
+      continue;
+    }
+
+    if (!currentTask && !currentPhase) continue;
+
+    // Field extraction from **Key:** Value lines
+    const fieldMatch = trimmed.match(/^\*\*(.+?):\*\*\s*(.*)/);
+    if (fieldMatch) {
+      const key = fieldMatch[1].toLowerCase().trim();
+      const val = fieldMatch[2].trim();
+
+      if (currentTask) {
+        if (key === 'description') {
+          currentTask.description = val;
+          collectingField = null;
+        } else if (key === 'duration' || key === 'estimated duration' || key === 'time') {
+          const hourMatch = val.match(/(\d+)\s*(?:hour|hr)/i);
+          const dayMatch = val.match(/(\d+(?:\.\d+)?)\s*day/i);
+          if (hourMatch) currentTask.estimatedHours = parseInt(hourMatch[1], 10);
+          else if (dayMatch) currentTask.estimatedHours = Math.round(parseFloat(dayMatch[1]) * 8);
+          collectingField = null;
+        } else if (key === 'dependencies' || key === 'depends on') {
+          if (val && val.toLowerCase() !== 'none') {
+            currentTask.dependencies = val.split(/[,;]/).map(d => d.trim()).filter(Boolean);
+          }
+          collectingField = null;
+        } else if (key === 'deliverables' || key === 'acceptance criteria') {
+          collectingField = 'deliverables';
+          if (val) currentTask.acceptanceCriteria.push(val);
+        } else if (key === 'status') {
+          collectingField = null;
+        } else if (key === 'technical notes' || key === 'notes') {
+          currentTask.technicalNotes = val;
+          collectingField = null;
+        }
+      } else if (currentPhase) {
+        if (key === 'phase description' || key === 'description') {
+          currentPhase.description = val;
+        }
+      }
+      continue;
+    }
+
+    // Collect bullet items for deliverables/acceptance criteria
+    if (collectingField === 'deliverables' && currentTask) {
+      const bulletMatch = trimmed.match(/^[-*]\s+(.+)/);
+      if (bulletMatch) {
+        currentTask.acceptanceCriteria.push(bulletMatch[1].trim());
+        continue;
+      }
+      // Non-bullet, non-field line ends the collection
+      if (trimmed) collectingField = null;
+    }
+  }
+
+  // Flush remaining
+  flushPhase();
+
+  if (plan.phases.length === 0) return null;
+  return plan;
 }
 
 /**
