@@ -15,6 +15,7 @@
   "license": "MIT",
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
+    "fs-extra": "^11.3.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",

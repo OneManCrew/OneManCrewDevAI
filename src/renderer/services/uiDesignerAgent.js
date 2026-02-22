@@ -1,6 +1,6 @@
 // ─── UI Designer Agent ─────────────────────────────────────────────────────────
 // Phase-based conversational agent for UI/UX design.
-// Reads SRS.md + HLD.md from previous stage, generates HTML mockup + CSS.
+// Reads SRS.md + HLD.md from previous stage, generates React + Tailwind components.
 
 import { ASK_USER_TOOL_INSTRUCTION } from './agentTools';
 
@@ -60,79 +60,88 @@ Your job is to understand the application's UI requirements and discuss the desi
 
   [UI_PHASES.DESIGN]: `${BASE_PERSONA}
 
-## Your Current Task: GENERATE UI MOCKUP
+## Your Current Task: GENERATE UI COMPONENTS
 
-Based on the conversation and the SRS/HLD documents, generate a complete UI mockup.
+Based on the conversation and the SRS/HLD documents, generate a complete set of React functional components styled with Tailwind CSS.
 
 ### Output Format:
-You MUST output exactly two fenced code blocks:
+Output each component as a SEPARATE fenced code block with the tag \`jsx:ComponentName.jsx\`.
 
-\`\`\`html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>App Mockup</title>
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <!-- Full mockup HTML here -->
-</body>
-</html>
+You MUST output at minimum:
+1. A main layout/app shell component
+2. Individual page/screen components for each screen identified in the SRS
+3. Shared UI components (Navbar, Sidebar, Footer, etc.)
+
+Example:
+
+\`\`\`jsx:AppShell.jsx
+import React, { useState } from 'react';
+import Sidebar from './Sidebar';
+import Dashboard from './Dashboard';
+// ... complete component code
+export default function AppShell() {
+  // ...
+}
 \`\`\`
 
-\`\`\`css
-/* Full stylesheet here */
+\`\`\`jsx:Sidebar.jsx
+import React from 'react';
+export default function Sidebar({ activeItem, onNavigate }) {
+  // ...
+}
 \`\`\`
 
 ### Design Requirements:
-1. Create a COMPLETE, realistic mockup of the entire application — not wireframes, but a polished mock.
-2. Include ALL screens/pages identified in the SRS, using tab/section navigation to switch between them.
-3. Use JavaScript within the HTML for interactive navigation (tab switching, modal toggling, etc.).
-4. The CSS must be in a SEPARATE file (linked as styles.css).
-5. Use modern CSS: flexbox, grid, custom properties, smooth transitions.
+1. Create COMPLETE, production-quality React functional components — not wireframes, but polished UI.
+2. Include ALL screens/pages identified in the SRS as separate components.
+3. Use React hooks (useState, useEffect, useCallback) for interactivity (tab switching, modal toggling, navigation state, etc.).
+4. Style EVERYTHING with Tailwind CSS utility classes — do NOT use inline styles or separate CSS files.
+5. Use modern Tailwind patterns: flexbox, grid, responsive prefixes (sm:, md:, lg:), dark mode support.
 6. Include realistic placeholder content (not "Lorem ipsum" — use contextually appropriate text).
-7. Ensure responsive design with media queries.
-8. Add hover states, focus states, and subtle animations.
-9. Use a cohesive color palette with CSS custom properties.
-10. Include proper typography hierarchy.
+7. Ensure responsive design with Tailwind breakpoints.
+8. Add hover states (hover:), focus states (focus:), and transitions (transition-all, duration-200).
+9. Use a cohesive color palette via Tailwind colors.
+10. Include proper typography hierarchy (text-xs, text-sm, text-lg, font-semibold, etc.).
 
-### Important:
-- The HTML file must be self-contained with inline JS for interactions.
-- The CSS file is separate and linked.
-- Make it look like a real, production-quality application.
-- Include all major screens and navigation between them.`,
+### Rules:
+- Every component must be a complete, self-contained file with all imports and exports.
+- Use \`export default function ComponentName()\` pattern.
+- Props should be destructured with sensible defaults.
+- Include brief inline comments only where logic is complex.
+- Do NOT use any CSS files — Tailwind classes only.
+- Do NOT use class components — functional components with hooks only.
+- Files will be saved to \`src/components/generated_ui/\`.`,
+
 
   [UI_PHASES.REVIEW]: `${BASE_PERSONA}
 
 ## Your Current Task: UI REVIEW & MODIFICATIONS
 
-The UI mockup has been generated and the user is reviewing it in a preview window.
-The user may request changes, additions, or fixes.
+The React components have been generated and saved to \`src/components/generated_ui/\`.
+The user is reviewing them and may request changes, additions, or fixes.
 
 ### Instructions:
 1. Listen to the user's feedback carefully.
-2. When making changes, output the COMPLETE updated files:
+2. When making changes, output the COMPLETE updated component(s) using the same format:
 
-\`\`\`html
-<!DOCTYPE html>
-<!-- Complete updated HTML -->
-</html>
+\`\`\`jsx:ComponentName.jsx
+import React from 'react';
+// Complete updated component
+export default function ComponentName() {
+  // ...
+}
 \`\`\`
 
-\`\`\`css
-/* Complete updated CSS */
-\`\`\`
-
-3. Always output BOTH files even if only one changed, to keep them in sync.
+3. Only output the component(s) that need changes — no need to re-output unchanged files.
 4. If the user asks a question (not a change), respond conversationally without code blocks.
 5. Be proactive — suggest improvements you notice.
 
 ### Important:
-- Output the FULL file contents, not patches or diffs.
+- Output the FULL component contents, not patches or diffs.
 - Maintain all existing functionality when making changes.
-- Keep the design cohesive when adding new elements.`,
+- Keep the design cohesive when adding new elements.
+- All styling must use Tailwind CSS utility classes only.`,
+
 
   [UI_PHASES.DONE]: `${BASE_PERSONA}
 
@@ -141,13 +150,10 @@ The user may request changes, additions, or fixes.
 The UI design has been approved. You can still make final adjustments if the user requests them.
 Follow the same output format as the Review phase for any changes.
 
-\`\`\`html
-<!-- Complete HTML if changes needed -->
-\`\`\`
-
-\`\`\`css
-/* Complete CSS if changes needed */
+\`\`\`jsx:ComponentName.jsx
+// Complete updated component if changes needed
 \`\`\``,
+
 };
 
 // ─── Phase Detection ───────────────────────────────────────────────────────────
@@ -161,19 +167,22 @@ export function detectUIPhaseTransition(responseText, currentPhase) {
 
 // ─── Output Parser ─────────────────────────────────────────────────────────────
 
+/**
+ * Extracts React component blocks from agent output.
+ * Looks for ```jsx:ComponentName.jsx or ```tsx:ComponentName.tsx blocks.
+ * Returns { components: [{ filename, content }] }
+ */
 export function parseUIDesignerOutput(text) {
-  const result = { html: null, css: null };
+  const result = { components: [] };
+  const regex = /```(?:jsx|tsx):([^\n`]+)\n([\s\S]*?)```/g;
+  let match;
 
-  // Extract HTML
-  const htmlMatch = text.match(/```html\s*\n([\s\S]*?)```/);
-  if (htmlMatch) {
-    result.html = htmlMatch[1].trim();
-  }
-
-  // Extract CSS
-  const cssMatch = text.match(/```css\s*\n([\s\S]*?)```/);
-  if (cssMatch) {
-    result.css = cssMatch[1].trim();
+  while ((match = regex.exec(text)) !== null) {
+    const filename = match[1].trim();
+    const content = match[2].trim();
+    if (filename && content) {
+      result.components.push({ filename, content });
+    }
   }
 
   return result;

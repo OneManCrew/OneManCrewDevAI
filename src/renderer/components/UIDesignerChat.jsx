@@ -32,7 +32,6 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   const [phase, setPhase] = useState(UI_PHASES.LOADING);
   const [tokenCount, setTokenCount] = useState(0);
   const [contextDocs, setContextDocs] = useState(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [hasUI, setHasUI] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -45,9 +44,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   messagesRef.current = messages;
 
   const docsPath = projectPath ? projectPath.replace(/[\\/]$/, '') + '/docs' : null;
-  const uiPath = docsPath ? docsPath + '/ui' : null;
-  const htmlPath = uiPath ? uiPath + '/index.html' : null;
-  const cssPath = uiPath ? uiPath + '/styles.css' : null;
+  const uiPath = projectPath ? projectPath.replace(/[\\/]$/, '') + '/src/components/generated_ui' : null;
 
   // ─── Reset all state when projectPath changes (workspace switch) ──────
   const prevPathRef = useRef(projectPath);
@@ -62,7 +59,6 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
       setPhase(UI_PHASES.LOADING);
       setTokenCount(0);
       setContextDocs(null);
-      setPreviewOpen(false);
       setHasUI(false);
       setHistoryLoaded(false);
       setAutoScroll(true);
@@ -95,7 +91,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-  const chatHistoryPath = uiPath ? uiPath + '/designer-chat.json' : null;
+  const chatHistoryPath = docsPath ? docsPath + '/ui/designer-chat.json' : null;
 
   // ─── Restore chat history on mount ──────────────────────────────────────
   useEffect(() => {
@@ -120,11 +116,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
               } catch (e) { /* docs may not exist yet */ }
             }
             setHistoryLoaded(true);
-            // Re-open preview if UI exists
-            if (saved.hasUI && htmlPath) {
-              await api.openPreview(htmlPath);
-              setPreviewOpen(true);
-            }
+            // Note: no preview window for React components
             return;
           }
         }
@@ -175,19 +167,20 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
 
         setContextDocs({ srs: srs || null, hld: hld || null });
 
-        // Check for existing UI files (resume support)
-        const [existingHtml, existingCss] = await Promise.all([
-          api.readFile(htmlPath),
-          api.readFile(cssPath),
-        ]);
+        // Check for existing generated UI components (resume support)
+        const uiDirExists = uiPath ? await api.exists(uiPath) : false;
+        let existingComponents = [];
+        if (uiDirExists) {
+          try {
+            const entries = await api.readDir(uiPath);
+            existingComponents = (entries || []).filter(e => !e.isDirectory && (e.name.endsWith('.jsx') || e.name.endsWith('.tsx')));
+          } catch (e) { /* ignore */ }
+        }
 
-        if (existingHtml) {
+        if (existingComponents.length > 0) {
           setHasUI(true);
           setPhase(UI_PHASES.REVIEW);
-          addMessage('system', 'Existing UI mockup found. You can review it, request changes, or approve.');
-          // Auto-open preview
-          await api.openPreview(htmlPath);
-          setPreviewOpen(true);
+          addMessage('system', `Existing UI components found (${existingComponents.length} files in src/components/generated_ui/). You can review them, request changes, or approve.`);
         } else {
           setPhase(UI_PHASES.DISCOVERY);
           addMessage('system', 'SRS and HLD loaded. Starting UI design discussion.');
@@ -218,24 +211,19 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     });
   }, []);
 
-  // ─── Save UI files and open/reload preview ──────────────────────────────
-  const saveAndPreview = useCallback(async (html, css) => {
-    if (!uiPath) return;
+  // ─── Save UI component files ─────────────────────────────────────
+  const saveComponents = useCallback(async (components) => {
+    if (!uiPath || !components || components.length === 0) return;
     try {
-      if (html) await api.writeFile(htmlPath, html);
-      if (css) await api.writeFile(cssPath, css);
-      setHasUI(true);
-
-      if (previewOpen) {
-        await api.reloadPreview();
-      } else {
-        await api.openPreview(htmlPath);
-        setPreviewOpen(true);
+      for (const comp of components) {
+        const filePath = uiPath + '/' + comp.filename;
+        await api.safeWriteFile(filePath, comp.content);
       }
+      setHasUI(true);
     } catch (err) {
-      console.error('Failed to save UI files:', err);
+      console.error('Failed to save UI components:', err);
     }
-  }, [uiPath, htmlPath, cssPath, previewOpen]);
+  }, [uiPath]);
 
   // ─── Core LLM send ──────────────────────────────────────────────────────
   const sendToLLM = useCallback(async (userMessage, currentPhase, { showUserMsg = true } = {}) => {
@@ -278,16 +266,17 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
             }
           }
 
-          // Extract and save UI files
+          // Extract and save UI component files
           if (currentPhase === UI_PHASES.DESIGN || currentPhase === UI_PHASES.REVIEW || currentPhase === UI_PHASES.DONE) {
             const output = parseUIDesignerOutput(fullResponse);
-            if (output.html || output.css) {
-              await saveAndPreview(output.html, output.css);
+            if (output.components.length > 0) {
+              await saveComponents(output.components);
+              const names = output.components.map(c => c.filename).join(', ');
               if (currentPhase === UI_PHASES.DESIGN) {
                 setPhase(UI_PHASES.REVIEW);
-                addMessage('system', 'UI mockup generated! Preview window opened. Review and provide feedback.');
+                addMessage('system', `UI components generated! ${output.components.length} files saved to src/components/generated_ui/ (${names}). Review and provide feedback.`);
               } else {
-                addMessage('system', 'UI updated. Preview refreshed.');
+                addMessage('system', `UI updated. ${output.components.length} component(s) saved (${names}).`);
               }
             }
           }
@@ -303,7 +292,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     } finally {
       setIsStreaming(false);
     }
-  }, [projectPath, agentSettings, contextDocs, addMessage, updateLastAssistant, saveAndPreview]);
+  }, [projectPath, agentSettings, contextDocs, addMessage, updateLastAssistant, saveComponents]);
 
   // ─── Auto-trigger design generation ──────────────────────────────────────
   const triggerDesign = useCallback(async () => {
@@ -326,10 +315,11 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
           updateLastAssistant(fullResponse);
 
           const output = parseUIDesignerOutput(fullResponse);
-          if (output.html || output.css) {
-            await saveAndPreview(output.html, output.css);
+          if (output.components.length > 0) {
+            await saveComponents(output.components);
+            const names = output.components.map(c => c.filename).join(', ');
             setPhase(UI_PHASES.REVIEW);
-            addMessage('system', 'UI mockup generated! Preview window opened.');
+            addMessage('system', `UI components generated! ${output.components.length} files saved (${names}).`);
           }
         },
         onError: (err) => setError(err.message || 'Error during design generation.'),
@@ -339,7 +329,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     } finally {
       setIsStreaming(false);
     }
-  }, [agentSettings, contextDocs, addMessage, updateLastAssistant, saveAndPreview]);
+  }, [agentSettings, contextDocs, addMessage, updateLastAssistant, saveComponents]);
 
   // ─── Quick reply handler (from option buttons) ─────────────────────────
   const handleQuickReply = async (value) => {
@@ -364,27 +354,28 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     notifyAgentComplete('UI Designer');
   };
 
-  const handleOpenPreview = async () => {
-    if (htmlPath) {
-      await api.openPreview(htmlPath);
-      setPreviewOpen(true);
-    }
-  };
-
   // ─── Reset agent ────────────────────────────────────────────────────────
   const handleReset = async () => {
     if (isStreaming) return;
     if (!confirm('Reset the UI Designer agent? This will delete the UI mockup and chat history.')) return;
     try {
-      if (htmlPath) await api.writeFile(htmlPath, '').catch(() => {});
-      if (cssPath) await api.writeFile(cssPath, '').catch(() => {});
+      // Delete generated UI component files
+      if (uiPath) {
+        try {
+          const entries = await api.readDir(uiPath);
+          for (const entry of (entries || [])) {
+            if (!entry.isDirectory && (entry.name.endsWith('.jsx') || entry.name.endsWith('.tsx'))) {
+              await api.writeFile(entry.path, '').catch(() => {});
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
       if (chatHistoryPath) await api.writeFile(chatHistoryPath, '').catch(() => {});
     } catch (e) { /* ignore */ }
     setMessages([]);
     setPhase(UI_PHASES.DISCOVERY);
     setTokenCount(0);
     setHasUI(false);
-    setPreviewOpen(false);
     setError(null);
   };
 
@@ -430,16 +421,14 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
 
           <div className="flex-1" />
 
-          {/* Preview button */}
+          {/* Component count badge */}
           {hasUI && (
-            <button onClick={handleOpenPreview}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-surface-elevated border border-border rounded-lg text-gray-400 hover:text-gray-200 hover:border-border-hover transition-colors">
+            <span className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-green-500/10 border border-green-500/20 rounded-lg text-green-400">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
-              Preview
-            </button>
+              Components saved
+            </span>
           )}
 
           {/* Phase Badge */}
@@ -581,15 +570,11 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
       {/* Approval Buttons (REVIEW phase) */}
       {phase === UI_PHASES.REVIEW && !isStreaming && (
         <div className="mx-4 mb-2 p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl">
-          <p className="text-xs text-amber-300 mb-2 font-medium">Review the UI in the preview window. Approve the design?</p>
+          <p className="text-xs text-amber-300 mb-2 font-medium">Components saved to src/components/generated_ui/. Approve the design?</p>
           <div className="flex gap-2">
             <button onClick={handleApprove}
               className="px-4 py-1.5 bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors">
               Approve Design
-            </button>
-            <button onClick={handleOpenPreview}
-              className="px-4 py-1.5 bg-surface-elevated text-gray-400 border border-border rounded-lg text-xs font-medium hover:border-border-hover transition-colors">
-              Open Preview
             </button>
           </div>
         </div>
@@ -609,10 +594,6 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
                 </svg>
               </button>
             )}
-            <button onClick={handleOpenPreview}
-              className="px-4 py-1.5 bg-surface-elevated text-gray-400 border border-border rounded-lg text-xs font-medium hover:border-border-hover transition-colors">
-              Open Preview
-            </button>
           </div>
         </div>
       )}

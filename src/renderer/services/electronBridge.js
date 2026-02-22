@@ -42,6 +42,14 @@ const mockAPI = {
     console.log(`[mock] execCommand: ${command} (cwd: ${cwd || 'N/A'})`);
     return { code: 0, stdout: '[mock] command executed', stderr: '', killed: false };
   },
+  execCommandQueued: async ({ command, cwd }) => {
+    console.log(`[mock] execCommandQueued: ${command} (cwd: ${cwd || 'N/A'})`);
+    return { code: 0, stdout: '[mock] queued command executed', stderr: '', killed: false };
+  },
+  safeWriteFile: async (filePath, content) => {
+    console.log(`[mock] safeWriteFile: ${filePath} (${content?.length || 0} bytes)`);
+    return true;
+  },
   openPreview: async (htmlFilePath) => {
     console.log('[mock] openPreview:', htmlFilePath);
     return true;

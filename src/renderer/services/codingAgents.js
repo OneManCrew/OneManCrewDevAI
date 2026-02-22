@@ -90,7 +90,7 @@ You are part of a team of specialist coding agents working together to implement
 ${projectContext.projectName ? `**Project:** ${projectContext.projectName}` : ''}
 ${projectContext.srs ? `\n### Software Requirements Specification (SRS)\n${projectContext.srs}` : ''}
 ${projectContext.hld ? `\n### High-Level Design (HLD)\n${projectContext.hld}` : ''}
-${projectContext.uiHtml ? `\n### UI Mockup (HTML)\n${projectContext.uiHtml}` : ''}
+${projectContext.uiComponents ? `\n### UI Components (React + Tailwind)\n${projectContext.uiComponents}` : ''}
 
 ## Your Current Task
 **Task ID:** ${task.id}
@@ -350,6 +350,32 @@ export class IncrementalCommandExtractor {
   }
 }
 
+// ─── Post-Write Syntax Validation ────────────────────────────────────────────
+
+const SYNTAX_CHECK_EXTENSIONS = ['.js', '.jsx', '.mjs', '.cjs'];
+
+/**
+ * Runs `node -c <file>` to check for syntax errors in JS/JSX files.
+ * Returns { valid: true } or { valid: false, error: string }.
+ */
+async function _validateSyntax(fullPath, projectPath) {
+  const ext = fullPath.substring(fullPath.lastIndexOf('.')).toLowerCase();
+  if (!SYNTAX_CHECK_EXTENSIONS.includes(ext)) return { valid: true };
+
+  try {
+    const result = await api.execCommand({
+      command: `node -c "${fullPath.replace(/\\/g, '/')}"`,
+      cwd: projectPath || undefined,
+    });
+    if (result.code === 0) return { valid: true };
+    return { valid: false, error: (result.stderr || '').trim().substring(0, 500) };
+  } catch (e) {
+    // If node -c itself fails to run, don't block — treat as valid
+    console.warn('[codingAgents] Syntax check failed to execute:', e);
+    return { valid: true };
+  }
+}
+
 // ─── Task Executor ──────────────────────────────────────────────────────────────
 
 /**
@@ -399,7 +425,7 @@ async function _runLLMCall(messages, settings, callbacks = {}) {
  * @param {string} projectPath — root path where files are saved (files go to projectPath/src/...)
  */
 export async function executeTask(task, projectContext, settings, callbacks = {}, projectPath = '') {
-  const { onToken, onProgress, onComplete, onError, onNeedInput, onFileWritten, onCommandExecuted } = callbacks;
+  const { onToken, onProgress, onComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onCommandQueued, onSyntaxError } = callbacks;
   const agentType = task.assignedAgent || AGENT_TYPES.BACKEND;
 
   const systemPrompt = buildAgentSystemPrompt(agentType, task, projectContext);
@@ -440,20 +466,27 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
       if (srcBase) {
         try {
           const fullPath = srcBase + '/' + file.path;
-          await api.writeFile(fullPath, file.content);
+          await api.safeWriteFile(fullPath, file.content);
           if (onFileWritten) onFileWritten(file);
+          // Post-write syntax validation for JS/JSX files
+          const validation = await _validateSyntax(fullPath, projectPath);
+          if (!validation.valid) {
+            console.warn(`[codingAgents] Syntax error in ${file.path}:`, validation.error);
+            if (onSyntaxError) onSyntaxError(file, validation.error);
+          }
         } catch (e) {
           console.warn(`[codingAgents] Failed to write ${file.path}:`, e);
         }
       }
     }
 
-    // Execute new commands
+    // Execute new commands via sequential queue
     const newCmds = cmdExtractor.update(fullOutput);
     for (const cmd of newCmds) {
       allCommands.push(cmd);
       try {
-        const result = await api.execCommand({
+        if (onCommandQueued) onCommandQueued(cmd);
+        const result = await api.execCommandQueued({
           command: cmd.command,
           cwd: projectPath || undefined,
         });
@@ -569,6 +602,18 @@ export class TaskLogger {
 
   fileWritten(file) {
     this._flush(`[${this._ts()}] 📄 FILE WRITTEN: ${file.path} (${file.content?.length || 0} bytes)`);
+  }
+
+  syntaxError(file, error) {
+    this._flush(`[${this._ts()}] 🚨 SYNTAX ERROR: ${file.path}`);
+    this._flush(`   ${error}`);
+  }
+
+  commandQueued(cmd) {
+    this._flush(`[${this._ts()}] ⏳ WAITING IN QUEUE: ${cmd.command}`);
+    if (cmd.description && cmd.description !== cmd.command) {
+      this._flush(`   Description: ${cmd.description}`);
+    }
   }
 
   commandExecuted(cmd, result) {
@@ -753,6 +798,14 @@ export class CodingOrchestrator {
           logger.fileWritten(file);
           this.onTaskUpdate(task, this.executionPlan);
           if (this.onFileWritten) this.onFileWritten(task, file);
+        },
+        onSyntaxError: (file, error) => {
+          logger.syntaxError(file, error);
+          this.onTaskUpdate(task, this.executionPlan);
+        },
+        onCommandQueued: (cmd) => {
+          logger.commandQueued(cmd);
+          this.onTaskUpdate(task, this.executionPlan);
         },
         onCommandExecuted: (cmd, result) => {
           task.commands.push({ ...cmd, result });

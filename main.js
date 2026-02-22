@@ -1,7 +1,11 @@
 const { app, BrowserWindow, ipcMain, dialog, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
+const fse = require('fs-extra');
+
+// Module-level reference to main window
+let mainWindow = null;
 
 // Settings file path (deferred — app.getPath is not available at module load)
 let SETTINGS_PATH = null;
@@ -53,8 +57,113 @@ function saveSettings(settings) {
   }
 }
 
+// ─── Command Queue ──────────────────────────────────────────────────────────
+
+class CommandQueue {
+  constructor() {
+    this.queue = [];
+    this.running = false;
+  }
+
+  enqueue(command, cwd, shell) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ command, cwd, shell, resolve, reject });
+      this._processNext();
+    });
+  }
+
+  _processNext() {
+    if (this.running || this.queue.length === 0) return;
+    this.running = true;
+
+    const { command, cwd, shell, resolve, reject } = this.queue.shift();
+    const isWin = process.platform === 'win32';
+    const shellBin = shell || (isWin ? 'powershell.exe' : '/bin/bash');
+
+    const execOpts = {
+      cwd: cwd || undefined,
+      env: { ...process.env },
+      shell: shellBin,
+      windowsHide: true,
+      timeout: 120_000,
+      maxBuffer: 10 * 1024 * 1024,
+    };
+
+    // Notify renderer that a queued command started
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('shell:output', { type: 'start', command, cwd: cwd || '', queued: true });
+    }
+
+    exec(command, execOpts, (error, stdout, stderr) => {
+      const code = error ? (error.killed ? -1 : error.code ?? 1) : 0;
+      const killed = !!(error && error.killed);
+
+      // Notify renderer that the queued command finished
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (stdout) {
+          mainWindow.webContents.send('shell:output', { type: 'stdout', command, data: stdout, queued: true });
+        }
+        if (stderr) {
+          mainWindow.webContents.send('shell:output', { type: 'stderr', command, data: stderr, queued: true });
+        }
+        mainWindow.webContents.send('shell:output', { type: 'exit', command, code, killed, queued: true });
+      }
+
+      // Always resolve (never reject) so the queue keeps moving.
+      // The caller can inspect `code` to detect failures.
+      resolve({ code, stdout: stdout || '', stderr: stderr || '', killed });
+
+      // Move to next task
+      this.running = false;
+      this._processNext();
+    });
+  }
+}
+
+const commandQueue = new CommandQueue();
+
+// ─── File Lock Manager ───────────────────────────────────────────────────────
+
+class FileLockManager {
+  constructor() {
+    this._locks = new Set();
+  }
+
+  isLocked(filePath) {
+    return this._locks.has(path.resolve(filePath));
+  }
+
+  lock(filePath) {
+    this._locks.add(path.resolve(filePath));
+  }
+
+  unlock(filePath) {
+    this._locks.delete(path.resolve(filePath));
+  }
+
+  /**
+   * Wait until the file is no longer locked, then acquire the lock.
+   * Retries every `intervalMs` up to `maxWaitMs`. Rejects on timeout.
+   */
+  async acquire(filePath, { maxWaitMs = 30_000, intervalMs = 50 } = {}) {
+    const resolved = path.resolve(filePath);
+    const start = Date.now();
+
+    while (this._locks.has(resolved)) {
+      if (Date.now() - start > maxWaitMs) {
+        throw new Error(`FileLockManager: timeout waiting for lock on ${resolved}`);
+      }
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+
+    this._locks.add(resolved);
+  }
+}
+
+const fileLockManager = new FileLockManager();
+
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 900,
@@ -347,6 +456,27 @@ function registerIpcHandlers() {
         resolve({ code: code ?? -1, stdout, stderr, killed });
       });
     });
+  });
+
+  // Execute shell command via sequential queue (prevents parallel conflicts)
+  ipcMain.handle('execute-command-queued', (_event, { command, cwd, shell }) => {
+    return commandQueue.enqueue(command, cwd, shell);
+  });
+
+  // Safe file write — acquires a per-file lock, waits if busy, writes atomically via fs-extra
+  ipcMain.handle('safe-write-file', async (_event, filePath, content) => {
+    try {
+      await fileLockManager.acquire(filePath);
+      try {
+        await fse.outputFile(filePath, content, 'utf-8');
+        return true;
+      } finally {
+        fileLockManager.unlock(filePath);
+      }
+    } catch (err) {
+      console.error('safe-write-file error:', err);
+      return false;
+    }
   });
 
   // Get app info

@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   mkdir: (dirPath) => ipcRenderer.invoke('fs:mkdir', dirPath),
   execCommand: (opts) => ipcRenderer.invoke('shell:exec', opts),
+  execCommandQueued: (opts) => ipcRenderer.invoke('execute-command-queued', opts),
+  safeWriteFile: (filePath, content) => ipcRenderer.invoke('safe-write-file', filePath, content),
 
   // Preview Window
   openPreview: (htmlFilePath) => ipcRenderer.invoke('preview:open', htmlFilePath),

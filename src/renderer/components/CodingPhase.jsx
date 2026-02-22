@@ -452,19 +452,29 @@ export default function CodingPhase({ projectPath, settings, onUpdateSettings, o
         setWorkplan(plan);
 
         // Load project context
-        const [srs, hld, uiHtml, uiCss] = await Promise.all([
+        const [srs, hld] = await Promise.all([
           api.readFile(docsPath + '/SRS.md'),
           api.readFile(docsPath + '/HLD.md'),
-          api.readFile(docsPath + '/ui/index.html'),
-          api.readFile(docsPath + '/ui/styles.css'),
         ]);
+
+        // Load generated UI components
+        let uiComponents = '';
+        const uiDir = projectPath.replace(/[\\/]$/, '') + '/src/components/generated_ui';
+        try {
+          const uiExists = await api.exists(uiDir);
+          if (uiExists) {
+            const entries = await api.readDir(uiDir);
+            const jsxFiles = (entries || []).filter(e => !e.isDirectory && (e.name.endsWith('.jsx') || e.name.endsWith('.tsx')));
+            const contents = await Promise.all(jsxFiles.map(f => api.readFile(f.path)));
+            uiComponents = jsxFiles.map((f, i) => `// --- ${f.name} ---\n${contents[i] || ''}`).join('\n\n');
+          }
+        } catch (e) { /* ignore */ }
 
         setProjectContext({
           projectName: plan.projectName || '',
           srs: srs || '',
           hld: hld || '',
-          uiHtml: uiHtml || '',
-          uiCss: uiCss || '',
+          uiComponents: uiComponents || '',
         });
 
         // Build execution plan

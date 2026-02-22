@@ -118,13 +118,23 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
             // Re-read actual file contents (saved contextDocs are booleans, not content)
             if (docsPath) {
               try {
-                const [srs, hld, uiHtml, uiCss] = await Promise.all([
+                const [srs, hld] = await Promise.all([
                   api.readFile(docsPath + '/SRS.md'),
                   api.readFile(docsPath + '/HLD.md'),
-                  api.readFile(docsPath + '/ui/index.html'),
-                  api.readFile(docsPath + '/ui/styles.css'),
                 ]);
-                setContextDocs({ srs, hld, uiHtml, uiCss });
+                // Load generated UI components
+                let uiComponents = '';
+                const uiDir = projectPath.replace(/[\\/]$/, '') + '/src/components/generated_ui';
+                try {
+                  const uiExists = await api.exists(uiDir);
+                  if (uiExists) {
+                    const entries = await api.readDir(uiDir);
+                    const jsxFiles = (entries || []).filter(e => !e.isDirectory && (e.name.endsWith('.jsx') || e.name.endsWith('.tsx')));
+                    const contents = await Promise.all(jsxFiles.map(f => api.readFile(f.path)));
+                    uiComponents = jsxFiles.map((f, i) => `// --- ${f.name} ---\n${contents[i] || ''}`).join('\n\n');
+                  }
+                } catch (e) { /* ignore */ }
+                setContextDocs({ srs, hld, uiComponents });
               } catch (e) { /* docs may not exist yet */ }
             }
             // Load task plan if exists
@@ -172,7 +182,7 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
     const timer = setTimeout(async () => {
       if (!pathStableRef.current) return;
       try {
-        const data = JSON.stringify({ messages, phase, contextDocs: contextDocs ? { srs: !!contextDocs.srs, hld: !!contextDocs.hld, uiHtml: !!contextDocs.uiHtml } : null }, null, 2);
+        const data = JSON.stringify({ messages, phase, contextDocs: contextDocs ? { srs: !!contextDocs.srs, hld: !!contextDocs.hld, uiComponents: !!contextDocs.uiComponents } : null }, null, 2);
         await api.writeFile(chatHistoryPath, data);
       } catch (e) {
         console.warn('Failed to persist dev lead chat history:', e);
@@ -187,11 +197,9 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
     if (messages.length > 0) return; // already restored from history
     (async () => {
       try {
-        const [srs, hld, uiHtml, uiCss] = await Promise.all([
+        const [srs, hld] = await Promise.all([
           api.readFile(docsPath + '/SRS.md'),
           api.readFile(docsPath + '/HLD.md'),
-          api.readFile(docsPath + '/ui/index.html'),
-          api.readFile(docsPath + '/ui/styles.css'),
         ]);
 
         if (!srs && !hld) {
@@ -199,7 +207,20 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
           return;
         }
 
-        setContextDocs({ srs, hld, uiHtml, uiCss });
+        // Load generated UI components
+        let uiComponents = '';
+        const uiDir = projectPath.replace(/[\\/]$/, '') + '/src/components/generated_ui';
+        try {
+          const uiExists = await api.exists(uiDir);
+          if (uiExists) {
+            const entries = await api.readDir(uiDir);
+            const jsxFiles = (entries || []).filter(e => !e.isDirectory && (e.name.endsWith('.jsx') || e.name.endsWith('.tsx')));
+            const contents = await Promise.all(jsxFiles.map(f => api.readFile(f.path)));
+            uiComponents = jsxFiles.map((f, i) => `// --- ${f.name} ---\n${contents[i] || ''}`).join('\n\n');
+          }
+        } catch (e) { /* ignore */ }
+
+        setContextDocs({ srs, hld, uiComponents });
 
         // Check for existing work plan
         if (taskPlanPath) {
