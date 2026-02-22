@@ -95,19 +95,27 @@ const COLORS = {
 
 // ─── Single Question Card ────────────────────────────────────────────────────
 
-function QuestionCard({ question, options, index, onAnswer, answered, disabled, accentColor }) {
+function QuestionCard({ question, options, index, onAnswer, answered, locked, disabled, accentColor, onClear }) {
   const [showOther, setShowOther] = useState(false);
   const [otherText, setOtherText] = useState('');
   const c = COLORS[accentColor] || COLORS.accent;
 
   const handleSelect = (value) => {
-    if (disabled || answered) return;
+    if (disabled || locked) return;
     onAnswer(index, value);
   };
 
   const handleOtherSubmit = () => {
-    if (!otherText.trim() || disabled || answered) return;
+    if (!otherText.trim() || disabled || locked) return;
     onAnswer(index, otherText.trim());
+    setShowOther(false);
+  };
+
+  const handleClear = () => {
+    if (disabled || locked) return;
+    if (onClear) onClear(index);
+    setShowOther(false);
+    setOtherText('');
   };
 
   return (
@@ -120,21 +128,23 @@ function QuestionCard({ question, options, index, onAnswer, answered, disabled, 
           <button
             key={i}
             onClick={() => handleSelect(opt.value)}
-            disabled={disabled || !!answered}
+            disabled={disabled || locked}
             className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all duration-150 text-left ${
               answered === opt.value
                 ? c.btnSelected
-                : answered
+                : answered && locked
                   ? 'border-border text-gray-600 cursor-not-allowed opacity-40'
-                  : c.btn
-            } ${!answered && !disabled ? 'cursor-pointer' : ''}`}
+                  : answered
+                    ? `${c.btn} opacity-60`
+                    : c.btn
+            } ${!locked && !disabled ? 'cursor-pointer' : ''}`}
           >
             <span className="opacity-50 mr-1">{i + 1}.</span>
             {opt.label}
           </button>
         ))}
 
-        {!answered && !showOther && (
+        {!locked && !showOther && (
           <button
             onClick={() => setShowOther(true)}
             disabled={disabled}
@@ -147,7 +157,7 @@ function QuestionCard({ question, options, index, onAnswer, answered, disabled, 
         )}
       </div>
 
-      {showOther && !answered && (
+      {showOther && !locked && (
         <div className="flex gap-1.5 mt-2">
           <input
             type="text"
@@ -176,7 +186,22 @@ function QuestionCard({ question, options, index, onAnswer, answered, disabled, 
         </div>
       )}
 
-      {answered && (
+      {answered && !locked && (
+        <div className="mt-1.5 flex items-center gap-1">
+          <svg className="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="text-[10px] text-green-400 font-medium">{answered}</span>
+          <button
+            onClick={handleClear}
+            className="ml-1 text-[10px] text-gray-500 hover:text-gray-300 underline transition-colors"
+          >
+            Change
+          </button>
+        </div>
+      )}
+
+      {answered && locked && (
         <div className="mt-1.5 flex items-center gap-1">
           <svg className="w-3 h-3 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -202,22 +227,28 @@ export default function MultiQuestionReply({ questions, onSubmit, disabled = fal
   const handleAnswer = (index, value) => {
     if (submitted) return;
     setAnswers((prev) => ({ ...prev, [index]: value }));
+  };
 
-    // If single question, submit immediately
-    if (questions.length === 1) {
-      setSubmitted(true);
-      onSubmit(value);
-    }
+  const handleClear = (index) => {
+    if (submitted) return;
+    setAnswers((prev) => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
   };
 
   const handleSubmitAll = () => {
     if (!allAnswered || submitted) return;
     setSubmitted(true);
-    // Format multi-answer as numbered responses
-    const response = questions.map((q, i) =>
-      `${i + 1}. ${q.question}\n   → ${answers[i]}`
-    ).join('\n\n');
-    onSubmit(response);
+    if (questions.length === 1) {
+      onSubmit(answers[0]);
+    } else {
+      const response = questions.map((q, i) =>
+        `${i + 1}. ${q.question}\n   → ${answers[i]}`
+      ).join('\n\n');
+      onSubmit(response);
+    }
   };
 
   return (
@@ -229,14 +260,15 @@ export default function MultiQuestionReply({ questions, onSubmit, disabled = fal
           options={q.options}
           index={i}
           onAnswer={handleAnswer}
-          answered={submitted || answers[i] ? answers[i] : null}
+          onClear={handleClear}
+          answered={answers[i] || null}
+          locked={submitted}
           disabled={disabled || submitted}
           accentColor={accentColor}
         />
       ))}
 
-      {/* Submit All button — only for multi-question */}
-      {questions.length > 1 && !submitted && (
+      {!submitted && (
         <button
           onClick={handleSubmitAll}
           disabled={!allAnswered}
@@ -247,8 +279,8 @@ export default function MultiQuestionReply({ questions, onSubmit, disabled = fal
           }`}
         >
           {allAnswered
-            ? `Submit All ${questions.length} Answers`
-            : `Answer all questions (${Object.keys(answers).length}/${questions.length})`
+            ? questions.length === 1 ? 'Send Answer' : `Submit All ${questions.length} Answers`
+            : questions.length === 1 ? 'Select an option' : `Answer all questions (${Object.keys(answers).length}/${questions.length})`
           }
         </button>
       )}
