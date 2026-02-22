@@ -129,6 +129,19 @@ Add or update a variable in the project's \`.env\` file. Use this when the task 
 - For **secrets or credentials** the user must provide (API keys, passwords), set value to \`"ASK_USER"\` and the system will prompt the user to enter it.
 - For **generated values** (ports, default URLs, app names), set the value directly.
 
+### 4. Integration Check (read-only)
+After completing an **integration** or **setup** task, the system will automatically run \`run_integration_check\` to verify:
+- All \`<script src>\` and \`<link href>\` in HTML files point to files that exist on disk
+- \`package.json\` has a valid \`"main"\` field and \`start\`/\`dev\`/\`build\` scripts
+- For Electron projects: \`main.js\` exists and its \`loadFile()\`/\`loadURL()\` references a valid HTML file
+
+If the check **fails**, you will receive the list of issues as a follow-up message and MUST fix them immediately by outputting corrected \`\`\`file:...\`\`\` or \`\`\`exec-command\`\`\` blocks. You do NOT invoke this tool yourself — it runs automatically after your task completes.
+
+**Important:** When working on integration or setup tasks, always ensure:
+- Every path you reference in HTML (\`src=\`, \`href=\`) matches the actual file location you wrote to disk
+- \`package.json\` scripts use correct commands for the project's tech stack
+- Electron \`main.js\` loads the correct \`index.html\` path
+
 ### Rules:
 1. Output EVERY file needed for this task as a separate \`\`\`file:...\`\`\` block.
 2. Each file must be COMPLETE — no placeholders, no "// TODO", no "..." abbreviations.
@@ -139,6 +152,7 @@ Add or update a variable in the project's \`.env\` file. Use this when the task 
 7. Do NOT output explanations outside of code blocks — only code and tool blocks.
 8. Files are written to disk immediately as you output them — the user sees progress in real-time.
 9. Use \`\`\`exec-command\`\`\` to install dependencies BEFORE writing code that uses them.
+10. If you receive integration check failures, fix ALL reported issues before finishing.
 
 ## Requesting User Input
 If you are BLOCKED and cannot proceed without user input (e.g. you need the user to install a missing tool like Node.js, choose between options, provide credentials, or approve a critical decision), output a special block:
@@ -765,7 +779,24 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
         }
       }
 
-      // Done — passed syntax check, quality gate, and no need-input
+      // ─── Integration Check: for integration/setup tasks, verify paths ──
+      const isIntegrationTask = agentType === AGENT_TYPES.INTEGRATION || agentType === AGENT_TYPES.SETUP ||
+        (task.category && ['integration', 'setup'].includes(task.category.toLowerCase()));
+      if (isIntegrationTask && projectPath && allFiles.length > 0) {
+        try {
+          const intCheck = await runIntegrationCheck(projectPath);
+          if (!intCheck.passed && turn < MAX_TURNS - 1) {
+            const issueList = intCheck.issues.map((issue, i) => `${i + 1}. ${issue}`).join('\n');
+            const fixPrompt = `**Integration Check Failed.** The following issues were detected after your task completed:\n\n${issueList}\n\nFix ALL issues now by outputting corrected \`\`\`file:...\`\`\` or \`\`\`exec-command\`\`\` blocks.`;
+            messages.push({ role: 'user', content: fixPrompt });
+            continue;
+          }
+        } catch (e) {
+          console.warn('[codingAgents] Integration check failed to run:', e);
+        }
+      }
+
+      // Done — passed syntax check, quality gate, integration check, and no need-input
       if (onProgress) onProgress(100);
       if (onComplete) onComplete({ files: allFiles, commands: allCommands, rawOutput: allOutput, tokenCount });
       return { rawOutput: allOutput };
