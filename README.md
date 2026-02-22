@@ -26,7 +26,7 @@ OneManCrew Dev AI replaces an entire development team with a pipeline of special
 | Stage | Agent | What It Does |
 |-------|-------|-------------|
 | 1 | **🏗️ Architect** | Interviews you about requirements, generates SRS & HLD documents |
-| 2 | **🎨 UI Designer** | Creates HTML/CSS mockups based on the architecture docs |
+| 2 | **🎨 UI Designer** | Creates React + Tailwind components with a full Design System (Lucide icons, Framer Motion animations, design tokens) |
 | 3 | **📋 Dev Lead** | Breaks the project into phases, tasks, and assigns specialist agents |
 | 4 | **💻 Coding Agents** | 6 specialist agents (Backend, Frontend, DevOps, QA, Integration, Setup) execute tasks in parallel |
 | 5 | **🐛 Bug Fixer** | Analyzes the codebase, identifies bugs, and dispatches fixes to the right specialist |
@@ -40,9 +40,9 @@ Each agent has its own chat interface where you can interact, guide, and overrid
 ```mermaid
 flowchart TD
     A["💡 You describe your idea"] --> B["🏗️ Architect — SRS + HLD"]
-    B --> C["🎨 UI Designer — HTML/CSS Mockup"]
+    B --> C["🎨 UI Designer — React + Tailwind Components"]
     C --> D["📋 Dev Lead — Work Plan + Tasks"]
-    D --> E["💻 Coding Agents x6 — Parallel Execution"]
+    D --> E["💻 Coding Agents x6 — Parallel Execution + QualityGate"]
     E --> F["🐛 Bug Fixer — QA + Auto-Fixes"]
     F --> G["✅ Your project is ready"]
     E --- E1["⚙️ Backend Engineer"]
@@ -182,17 +182,24 @@ When you run the pipeline on a project, it generates:
 
 ```
 your-project/
-└── docs/
-    ├── SRS.md                       # Software Requirements Specification
-    ├── HLD.md                       # High-Level Design document
-    ├── ui/
-    │   ├── index.html               # UI mockup
-    │   └── styles.css               # UI styles
-    └── dev-lead/
-        ├── workplan.json            # Full task breakdown
-        ├── coding-status.json       # Task execution status
-        ├── chat-history.json        # Dev Lead conversation
-        └── task-logs/               # Per-task execution logs
+├── docs/
+│   ├── SRS.md                       # Software Requirements Specification
+│   ├── HLD.md                       # High-Level Design document
+│   ├── context_summary.json         # Shared Knowledge Base (auto-updated)
+│   └── dev-lead/
+│       ├── workplan.json            # Full task breakdown
+│       ├── coding-status.json       # Task execution status
+│       ├── chat-history.json        # Dev Lead conversation
+│       └── task-logs/               # Per-task execution logs
+└── src/
+    ├── theme/
+    │   └── colors.json              # Design tokens (from UI Designer)
+    ├── components/
+    │   └── generated_ui/            # React + Tailwind components
+    │       ├── AppShell.jsx
+    │       ├── Sidebar.jsx
+    │       └── ...                   # All UI components
+    └── ...                           # Generated source code
 ```
 
 ---
@@ -229,14 +236,27 @@ Contributions are welcome! Here's how to get started:
 
 ---
 
+## �️ Infrastructure Features
+
+| Feature | Description |
+|---------|-------------|
+| **Safe File Writes** | `FileLockManager` prevents concurrent agent writes to the same file via lock-and-retry mechanism |
+| **Command Queue + Timeout** | Sequential command execution with 300s timeout and process tree kill on stuck commands |
+| **Syntax Validation** | Auto-runs `node -c` on every `.js`/`.jsx` file after write; injects errors back to LLM for auto-fix (max 2 retries) |
+| **QualityGate** | Shadow LLM reviewer verifies code against task requirements + SRS before marking done (max 2 rounds) |
+| **Shared Knowledge Base** | `docs/context_summary.json` — tracks all files, exports, technologies, entities (API routes, components, env vars), and LLM-generated task summaries; injected into every agent's prompt |
+| **Design System** | `src/theme/colors.json` design tokens created during UI Discovery; all components use Lucide React icons + Framer Motion animations |
+| **Stop-on-Failure** | Pauses execution when a critical task fails; asks user to continue or stop; marks downstream tasks as BLOCKED |
+| **Smart Preview** | Detects running Vite dev server (ports 5173/5174/3000/3001) for live preview, or generates a styled HTML code viewer as fallback |
+
 ## 📋 Roadmap
 
+- [x] ~~Agent memory across sessions~~ → Shared Knowledge Base (`context_summary.json`)
+- [x] ~~Automated testing pipeline~~ → Syntax validation + QualityGate
 - [ ] Multi-language support
 - [ ] Git integration (auto-commit generated code)
-- [ ] Agent memory across sessions
 - [ ] Plugin system for custom agents
 - [ ] Project templates
-- [ ] Automated testing pipeline
 - [ ] VS Code extension
 
 ---
