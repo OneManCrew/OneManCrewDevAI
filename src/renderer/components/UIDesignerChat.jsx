@@ -253,17 +253,9 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     if (!uiPath || !projectPath) return;
     const base = projectPath.replace(/[\\/]$/, '');
 
-    // Strategy 1: Detect running Vite/React dev server via native IPC probe
-    try {
-      const viteUrl = await api.detectViteServer();
-      if (viteUrl) {
-        await api.openPreviewUrl(viteUrl);
-        return;
-      }
-    } catch (e) { /* no dev server found */ }
-
-    // Strategy 2: Generate a standalone HTML wrapper with Tailwind CDN
-    // that renders the first component (AppShell or first file) inline
+    // Always generate an HTML code preview for the generated components.
+    // detectViteServer is NOT used here because it picks up OneManCrew's
+    // own dev server on port 5173, not the target project's server.
     try {
       const entries = await api.readDir(uiPath);
       const jsxFiles = (entries || []).filter(e => !e.isDirectory && (e.name.endsWith('.jsx') || e.name.endsWith('.tsx')));
@@ -317,18 +309,21 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   // ─── Live Preview (Vite dev server) ─────────────────────────────────
   const [viteUrl, setViteUrl] = useState(null);
 
-  // Periodically check for Vite dev server when we have UI components
+  // Periodically check for Vite dev server when we have UI components.
+  // Skip port 5173 — that is always OneManCrew's own dev server.
   useEffect(() => {
     if (!hasUI) return;
     let cancelled = false;
     const check = async () => {
       try {
         const url = await api.detectViteServer();
-        if (!cancelled) setViteUrl(url);
+        // Ignore port 5173 (OneManCrew IDE) — only accept other ports
+        if (!cancelled && url && !url.includes(':5173')) setViteUrl(url);
+        else if (!cancelled) setViteUrl(null);
       } catch (e) { /* ignore */ }
     };
     check();
-    const interval = setInterval(check, 15000); // re-check every 15s
+    const interval = setInterval(check, 30000); // re-check every 30s
     return () => { cancelled = true; clearInterval(interval); };
   }, [hasUI]);
 
@@ -338,7 +333,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     } else {
       // Fallback: try one more time, then fall back to code preview
       const url = await api.detectViteServer();
-      if (url) {
+      if (url && !url.includes(':5173')) {
         setViteUrl(url);
         await api.openPreviewUrl(url);
       } else {
