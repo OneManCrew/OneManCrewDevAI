@@ -54,6 +54,11 @@ const mockAPI = {
     console.log('[mock] openPreview:', htmlFilePath);
     return true;
   },
+  openPreviewUrl: async (url) => {
+    console.log('[mock] openPreviewUrl:', url);
+    window.open(url, '_blank');
+    return true;
+  },
   reloadPreview: async () => true,
   closePreview: async () => true,
   showNotification: async ({ title, body }) => {

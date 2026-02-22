@@ -225,6 +225,76 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     }
   }, [uiPath]);
 
+  // ─── Smart Preview ─────────────────────────────────────────────────
+  const previewComponents = useCallback(async () => {
+    if (!uiPath || !projectPath) return;
+    const base = projectPath.replace(/[\\/]$/, '');
+
+    // Strategy 1: Check if target project has a running Vite dev server
+    // Common ports: 5173, 5174, 3000, 3001
+    const devPorts = [5173, 5174, 3000, 3001];
+    for (const port of devPorts) {
+      try {
+        const result = await api.execCommand({ command: `node -e "const h=require('http');h.get('http://localhost:${port}',(r)=>{process.exit(r.statusCode<400?0:1)}).on('error',()=>process.exit(1))"`, cwd: base });
+        if (result.code === 0) {
+          await api.openPreviewUrl(`http://localhost:${port}`);
+          return;
+        }
+      } catch (e) { /* port not available */ }
+    }
+
+    // Strategy 2: Generate a standalone HTML wrapper with Tailwind CDN
+    // that renders the first component (AppShell or first file) inline
+    try {
+      const entries = await api.readDir(uiPath);
+      const jsxFiles = (entries || []).filter(e => !e.isDirectory && (e.name.endsWith('.jsx') || e.name.endsWith('.tsx')));
+      if (jsxFiles.length === 0) return;
+
+      // Read all component contents
+      const components = [];
+      for (const f of jsxFiles) {
+        const content = await api.readFile(f.path);
+        if (content) components.push({ name: f.name, content });
+      }
+
+      // Build a preview HTML that shows the component code in a styled viewer
+      const componentList = components.map(c =>
+        `<div class="mb-6"><h2 class="text-lg font-semibold text-gray-200 mb-2 flex items-center gap-2"><span class="text-pink-400">●</span> ${c.name}</h2><pre class="bg-gray-900 rounded-lg p-4 overflow-x-auto text-sm text-gray-300 border border-gray-700"><code>${c.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre></div>`
+      ).join('\n');
+
+      const previewHtml = `<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UI Components Preview</title>
+  <script src="https://cdn.tailwindcss.com"><\/script>
+  <script>tailwindcss.config={darkMode:'class'}<\/script>
+</head>
+<body class="bg-gray-950 text-gray-100 p-8 font-sans">
+  <div class="max-w-4xl mx-auto">
+    <div class="mb-8 pb-4 border-b border-gray-800">
+      <h1 class="text-2xl font-bold text-white">Generated UI Components</h1>
+      <p class="text-sm text-gray-400 mt-1">${components.length} component(s) in src/components/generated_ui/</p>
+      <p class="text-xs text-gray-500 mt-2">To see a live interactive preview, start a Vite dev server in your target project and import these components.</p>
+    </div>
+    ${componentList}
+  </div>
+</body>
+</html>`;
+
+      const previewPath = base + '/docs/ui/_preview.html';
+      await api.writeFile(previewPath, previewHtml);
+      await api.openPreview(previewPath);
+    } catch (err) {
+      console.error('Failed to generate preview:', err);
+    }
+  }, [uiPath, projectPath]);
+
+  const handleOpenPreview = useCallback(async () => {
+    await previewComponents();
+  }, [previewComponents]);
+
   // ─── Core LLM send ──────────────────────────────────────────────────────
   const sendToLLM = useCallback(async (userMessage, currentPhase, { showUserMsg = true } = {}) => {
     setError(null);
@@ -421,14 +491,16 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
 
           <div className="flex-1" />
 
-          {/* Component count badge */}
+          {/* Preview button */}
           {hasUI && (
-            <span className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-green-500/10 border border-green-500/20 rounded-lg text-green-400">
+            <button onClick={handleOpenPreview}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-surface-elevated border border-border rounded-lg text-gray-400 hover:text-gray-200 hover:border-border-hover transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
-              Components saved
-            </span>
+              Preview
+            </button>
           )}
 
           {/* Phase Badge */}
@@ -576,6 +648,10 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
               className="px-4 py-1.5 bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors">
               Approve Design
             </button>
+            <button onClick={handleOpenPreview}
+              className="px-4 py-1.5 bg-surface-elevated text-gray-400 border border-border rounded-lg text-xs font-medium hover:border-border-hover transition-colors">
+              Preview
+            </button>
           </div>
         </div>
       )}
@@ -594,6 +670,10 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
                 </svg>
               </button>
             )}
+            <button onClick={handleOpenPreview}
+              className="px-4 py-1.5 bg-surface-elevated text-gray-400 border border-border rounded-lg text-xs font-medium hover:border-border-hover transition-colors">
+              Preview
+            </button>
           </div>
         </div>
       )}

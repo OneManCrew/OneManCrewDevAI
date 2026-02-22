@@ -91,6 +91,7 @@ ${projectContext.projectName ? `**Project:** ${projectContext.projectName}` : ''
 ${projectContext.srs ? `\n### Software Requirements Specification (SRS)\n${projectContext.srs}` : ''}
 ${projectContext.hld ? `\n### High-Level Design (HLD)\n${projectContext.hld}` : ''}
 ${projectContext.uiComponents ? `\n### UI Components (React + Tailwind)\n${projectContext.uiComponents}` : ''}
+${projectContext.contextSummary ? `\n### Shared Context (from completed tasks)\n${projectContext.contextSummary}` : ''}
 
 ## Your Current Task
 **Task ID:** ${task.id}
@@ -697,6 +698,58 @@ export class TaskLogger {
   }
 }
 
+// ─── Shared Context Summary ──────────────────────────────────────────────────
+
+const TECH_PATTERNS = [
+  { pattern: /\bimport\b.*\bfrom\s+['"]react['"]/, tech: 'React' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]next/, tech: 'Next.js' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]express['"]/, tech: 'Express.js' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]fastify['"]/, tech: 'Fastify' },
+  { pattern: /\btailwind/, tech: 'Tailwind CSS' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]mongoose['"]/, tech: 'Mongoose' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]prisma/, tech: 'Prisma' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]socket\.io/, tech: 'Socket.IO' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]vue['"]/, tech: 'Vue.js' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]svelte/, tech: 'Svelte' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]@angular/, tech: 'Angular' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]typescript/, tech: 'TypeScript' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]zod['"]/, tech: 'Zod' },
+  { pattern: /\bimport\b.*\bfrom\s+['"]@trpc/, tech: 'tRPC' },
+];
+
+/**
+ * Extracts exported function/class names and detects technologies from file content.
+ */
+function _extractContextFromFiles(files) {
+  const exports = [];
+  const techSet = new Set();
+
+  for (const file of files) {
+    if (!file.content) continue;
+
+    // Extract exported symbols
+    const exportMatches = file.content.matchAll(
+      /export\s+(?:default\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g
+    );
+    for (const m of exportMatches) {
+      exports.push({ name: m[1], file: file.path });
+    }
+
+    // Detect technologies
+    for (const { pattern, tech } of TECH_PATTERNS) {
+      if (pattern.test(file.content)) techSet.add(tech);
+    }
+
+    // Detect by file extension
+    if (file.path.endsWith('.ts') || file.path.endsWith('.tsx')) techSet.add('TypeScript');
+    if (file.path.endsWith('.jsx') || file.path.endsWith('.tsx')) techSet.add('React');
+    if (file.path.endsWith('.vue')) techSet.add('Vue.js');
+    if (file.path.endsWith('.svelte')) techSet.add('Svelte');
+  }
+
+  return { exports, technologies: [...techSet] };
+}
+
 // ─── Orchestrator ───────────────────────────────────────────────────────────────
 
 /**
@@ -724,6 +777,9 @@ export class CodingOrchestrator {
     this.completedTasks = 0;
     this.totalTasks = this.executionPlan.length;
     this.allFiles = [];
+    this._contextSummaryPath = this.projectPath
+      ? this.projectPath.replace(/[\\/]$/, '') + '/docs/context_summary.json'
+      : '';
   }
 
   getExecutionPlan() {
@@ -742,6 +798,20 @@ export class CodingOrchestrator {
     if (this.isRunning) return;
     this.isRunning = true;
     this.isCancelled = false;
+
+    // Load existing context summary into projectContext for injection into prompts
+    try {
+      if (this._contextSummaryPath) {
+        const raw = await api.readFile(this._contextSummaryPath);
+        if (raw) {
+          const summary = JSON.parse(raw);
+          this.projectContext = {
+            ...this.projectContext,
+            contextSummary: JSON.stringify(summary, null, 2),
+          };
+        }
+      }
+    } catch (e) { /* no existing summary */ }
 
     try {
       for (let batchIdx = 0; batchIdx < this.batches.length; batchIdx++) {
@@ -793,7 +863,7 @@ export class CodingOrchestrator {
           logger.progress(rounded);
           this.onTaskUpdate(task, this.executionPlan);
         },
-        onComplete: ({ files, commands, rawOutput, tokenCount }) => {
+        onComplete: async ({ files, commands, rawOutput, tokenCount }) => {
           task.status = 'done';
           task.progress = 100;
           task.output = rawOutput;
@@ -803,6 +873,8 @@ export class CodingOrchestrator {
           this.allFiles.push(...files);
           logger.complete(files, commands || []);
           this.onTaskUpdate(task, this.executionPlan);
+          // Update shared context summary
+          await this._updateContextSummary(task, files);
         },
         onError: (err) => {
           task.status = 'error';
@@ -853,6 +925,69 @@ export class CodingOrchestrator {
       this.completedTasks++;
       logger.error(err.message || 'Unknown error');
       this.onTaskUpdate(task, this.executionPlan);
+    }
+  }
+
+  /**
+   * Updates docs/context_summary.json with newly created files, exports, and technologies.
+   * Merges with existing summary so all agents share cumulative knowledge.
+   */
+  async _updateContextSummary(task, files) {
+    if (!this._contextSummaryPath || files.length === 0) return;
+    try {
+      // Load existing summary
+      let summary = { files: [], exports: [], technologies: [], completedTasks: [] };
+      try {
+        const raw = await api.readFile(this._contextSummaryPath);
+        if (raw) summary = { ...summary, ...JSON.parse(raw) };
+      } catch (e) { /* first time */ }
+
+      // Extract context from newly written files
+      const { exports: newExports, technologies: newTech } = _extractContextFromFiles(files);
+
+      // Merge files (deduplicate by path)
+      const existingPaths = new Set(summary.files.map(f => f.path));
+      for (const file of files) {
+        if (!existingPaths.has(file.path)) {
+          summary.files.push({ path: file.path, size: file.content?.length || 0 });
+          existingPaths.add(file.path);
+        }
+      }
+
+      // Merge exports (deduplicate by name+file)
+      const existingExports = new Set(summary.exports.map(e => `${e.name}@${e.file}`));
+      for (const exp of newExports) {
+        const key = `${exp.name}@${exp.file}`;
+        if (!existingExports.has(key)) {
+          summary.exports.push(exp);
+          existingExports.add(key);
+        }
+      }
+
+      // Merge technologies
+      const techSet = new Set([...summary.technologies, ...newTech]);
+      summary.technologies = [...techSet];
+
+      // Track completed task
+      summary.completedTasks.push({
+        id: task.id,
+        title: task.title,
+        agent: task.assignedAgent,
+        filesWritten: files.map(f => f.path),
+      });
+
+      summary.updatedAt = new Date().toISOString();
+
+      // Write back
+      await api.safeWriteFile(this._contextSummaryPath, JSON.stringify(summary, null, 2));
+
+      // Update projectContext so subsequent tasks in this run get the latest
+      this.projectContext = {
+        ...this.projectContext,
+        contextSummary: JSON.stringify(summary, null, 2),
+      };
+    } catch (e) {
+      console.warn('[CodingOrchestrator] Failed to update context summary:', e);
     }
   }
 }

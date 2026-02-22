@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Preview Window
   openPreview: (htmlFilePath) => ipcRenderer.invoke('preview:open', htmlFilePath),
+  openPreviewUrl: (url) => ipcRenderer.invoke('preview:openUrl', url),
   reloadPreview: () => ipcRenderer.invoke('preview:reload'),
   closePreview: () => ipcRenderer.invoke('preview:close'),
 

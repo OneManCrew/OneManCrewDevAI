@@ -226,12 +226,8 @@ function createWindow() {
 
 let previewWindow = null;
 
-function openPreviewWindow(htmlFilePath) {
-  if (previewWindow && !previewWindow.isDestroyed()) {
-    previewWindow.loadFile(htmlFilePath);
-    previewWindow.focus();
-    return;
-  }
+function _ensurePreviewWindow() {
+  if (previewWindow && !previewWindow.isDestroyed()) return previewWindow;
 
   previewWindow = new BrowserWindow({
     width: 1200,
@@ -247,11 +243,23 @@ function openPreviewWindow(htmlFilePath) {
     },
   });
 
-  previewWindow.loadFile(htmlFilePath);
-
   previewWindow.on('closed', () => {
     previewWindow = null;
   });
+
+  return previewWindow;
+}
+
+function openPreviewWindow(htmlFilePath) {
+  const win = _ensurePreviewWindow();
+  win.loadFile(htmlFilePath);
+  win.focus();
+}
+
+function openPreviewUrl(url) {
+  const win = _ensurePreviewWindow();
+  win.loadURL(url);
+  win.focus();
 }
 
 function reloadPreviewWindow() {
@@ -325,6 +333,11 @@ function registerIpcHandlers() {
   // Preview window
   ipcMain.handle('preview:open', (_event, htmlFilePath) => {
     openPreviewWindow(htmlFilePath);
+    return true;
+  });
+
+  ipcMain.handle('preview:openUrl', (_event, url) => {
+    openPreviewUrl(url);
     return true;
   });
 
