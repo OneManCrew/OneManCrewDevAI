@@ -403,26 +403,12 @@ function _extractFencedBlock(text, tag) {
 // ─── Atomic Document Save with Merge ────────────────────────────────────────
 
 /**
- * Merges a new document with an existing one on disk.
- * Strategy: if the existing file has content, prepend a version separator and append the old
- * content as a "Previous Version" reference at the bottom. The new content is always the
- * primary document. This prevents accidental data loss while keeping the latest version on top.
+ * Returns the new content as-is (clean overwrite).
+ * Previous merge logic was removed because it caused files to balloon in size
+ * with nested "Previous Version" sections on every re-generation.
  */
-function _mergeDocument(existingContent, newContent) {
-  if (!existingContent || existingContent.trim().length === 0) {
-    return newContent; // No existing content — just use new
-  }
-
-  // If the new content is substantially the same (>90% overlap), skip merge
-  const existingTrimmed = existingContent.trim();
-  const newTrimmed = newContent.trim();
-  if (existingTrimmed === newTrimmed) {
-    return newContent; // Identical — no merge needed
-  }
-
-  // Append previous version as a reference section at the bottom
-  const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-  return `${newTrimmed}\n\n---\n\n<details>\n<summary>📋 Previous Version (${timestamp})</summary>\n\n${existingTrimmed}\n\n</details>\n`;
+function _mergeDocument(_existingContent, newContent) {
+  return newContent;
 }
 
 /**
@@ -435,16 +421,18 @@ function _mergeDocument(existingContent, newContent) {
  * @param {{ srs: string|null, hld: string|null }} docs — parsed documents
  * @returns {Promise<{ saved: string[], errors: string[] }>}
  */
-export async function saveArchitectDocs(projectPath, docs) {
+export async function saveArchitectDocs(projectPath, docs, { onlyKeys = null } = {}) {
   const docsPath = projectPath.replace(/[\\/]$/, '') + '/docs';
   const saved = [];
   const errors = [];
 
-  console.log(`[ARCHITECT:save] projectPath=${projectPath}, docsPath=${docsPath}`);
+  console.log(`[ARCHITECT:save] projectPath=${projectPath}, docsPath=${docsPath}, onlyKeys=${onlyKeys}`);
   console.log(`[ARCHITECT:save] SRS: ${docs.srs ? docs.srs.length + ' chars' : 'null'}, HLD: ${docs.hld ? docs.hld.length + ' chars' : 'null'}`);
 
   for (const [key, filename] of [['srs', 'SRS.md'], ['hld', 'HLD.md']]) {
     if (!docs[key]) continue;
+    // If onlyKeys is specified, skip keys not in the list (used by auto-follow-up)
+    if (onlyKeys && !onlyKeys.includes(key)) continue;
 
     const filePath = docsPath + '/' + filename;
     try {

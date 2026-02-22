@@ -54,6 +54,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
   // ─── Reset all state when projectPath changes (workspace switch) ──────
   const prevPathRef = useRef(projectPath);
   const pathStableRef = useRef(true);
+  const pendingFollowUpKeyRef = useRef(null); // tracks which doc key ('srs'|'hld') the auto-follow-up is fetching
   useEffect(() => {
     if (prevPathRef.current && prevPathRef.current !== projectPath) {
       pathStableRef.current = false;
@@ -224,9 +225,10 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
           }
 
           // ─── Save docs helper (shared by GENERATION and DONE) ───
-          const _handleDocSave = async (docs, phase) => {
+          // onlyKeys: optional array like ['hld'] to save only specific docs (used by auto-follow-up)
+          const _handleDocSave = async (docs, phase, { onlyKeys = null, isFollowUp = false } = {}) => {
             if (!docs.srs && !docs.hld) return;
-            const { saved, errors } = await saveArchitectDocs(projectPath, docs);
+            const { saved, errors } = await saveArchitectDocs(projectPath, docs, { onlyKeys });
             setDocsReady(true);
             setDocsVersion(v => v + 1);
             if (phase === PHASES.GENERATION) {
@@ -241,22 +243,26 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
               addMessage('system', `⚠️ Save errors: ${errors.join('; ')}`);
             }
 
-            // Auto-follow-up: if only one doc was produced, ask for the missing one
-            const missingSRS = !docs.srs;
-            const missingHLD = !docs.hld;
-            if (missingSRS || missingHLD) {
-              const missingDoc = missingSRS ? 'SRS' : 'HLD';
-              const missingFence = missingSRS ? '```srs' : '```hld';
-              console.log(`[ARCHITECT:autoFollowUp] Missing ${missingDoc} — sending follow-up request`);
-              addMessage('system', `⏳ ${missingDoc} was not included — requesting it automatically...`);
-              // Schedule follow-up after streaming ends
-              setTimeout(() => {
-                sendToLLM(
-                  `You only produced the ${docs.srs ? 'SRS' : 'HLD'} document but NOT the ${missingDoc}. You MUST now output the complete ${missingDoc} wrapped in a ${missingFence} fence. Output ONLY the ${missingDoc} document now.`,
-                  PHASES.DONE,
-                  { showUserMsg: false }
-                );
-              }, 500);
+            // Auto-follow-up: if only one doc was produced AND this is NOT already a follow-up
+            if (!isFollowUp) {
+              const missingSRS = !docs.srs;
+              const missingHLD = !docs.hld;
+              if (missingSRS || missingHLD) {
+                const missingDoc = missingSRS ? 'SRS' : 'HLD';
+                const missingKey = missingSRS ? 'srs' : 'hld';
+                const missingFence = missingSRS ? '```srs' : '```hld';
+                console.log(`[ARCHITECT:autoFollowUp] Missing ${missingDoc} — sending follow-up request`);
+                addMessage('system', `⏳ ${missingDoc} was not included — requesting it automatically...`);
+                // Mark that the next save should only save the missing key
+                pendingFollowUpKeyRef.current = missingKey;
+                setTimeout(() => {
+                  sendToLLM(
+                    `You only produced the ${docs.srs ? 'SRS' : 'HLD'} document but NOT the ${missingDoc}. You MUST now output the complete ${missingDoc} wrapped in a ${missingFence} fence. Output ONLY the ${missingDoc} document now.`,
+                    PHASES.DONE,
+                    { showUserMsg: false }
+                  );
+                }, 500);
+              }
             }
           };
 
@@ -273,7 +279,15 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             console.log(`[ARCHITECT:onDone] DONE phase — fullResponse length: ${fullResponse.length}, first 200: ${fullResponse.substring(0, 200)}`);
             const docs = parseArchitectOutput(fullResponse);
             if (docs.srs || docs.hld) {
-              await _handleDocSave(docs, PHASES.DONE);
+              // If this is a follow-up response, only save the missing doc
+              const followUpKey = pendingFollowUpKeyRef.current;
+              if (followUpKey) {
+                pendingFollowUpKeyRef.current = null; // reset
+                console.log(`[ARCHITECT:onDone] Follow-up save — only saving: ${followUpKey}`);
+                await _handleDocSave(docs, PHASES.DONE, { onlyKeys: [followUpKey], isFollowUp: true });
+              } else {
+                await _handleDocSave(docs, PHASES.DONE);
+              }
             }
           }
         },
