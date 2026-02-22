@@ -194,7 +194,7 @@ export function buildExecutionPlan(workplan) {
         phaseId: phase.id,
         phaseOrder: phase.order || 0,
         assignedAgent: agentType,
-        status: 'pending', // pending | running | done | error
+        status: 'pending', // pending | blocked | running | done | error | waiting
         progress: 0,
         output: null,
         files: [],
@@ -413,6 +413,60 @@ async function _runLLMCall(messages, settings, callbacks = {}) {
   });
 }
 
+// ─── Quality Gate (Shadow Reviewer) ─────────────────────────────────────────
+
+/**
+ * Runs a lightweight shadow LLM call that reviews the agent's output against
+ * the task requirements and SRS. Returns { passed: boolean, feedback: string }.
+ */
+async function _runQualityGate(task, projectContext, allFiles, settings) {
+  // Build a compact summary of written files (path + first export lines)
+  const filesSummary = allFiles.slice(0, 10).map(f => {
+    const exports = (f.content || '').split('\n')
+      .filter(l => /^(export|module\.exports)/.test(l.trim()))
+      .slice(0, 5).join('\n');
+    return `### ${f.path}\n\`\`\`\n${exports || '(no exports)'}\n\`\`\``;
+  }).join('\n\n');
+
+  const reviewMessages = [
+    { role: 'system', content: `You are a strict QA reviewer. Your job is to verify whether the code produced by a coding agent actually fulfills the task requirements.
+
+Respond with ONLY a JSON object (no markdown wrapping):
+{"passed": true/false, "feedback": "brief explanation"}
+
+- "passed": true if the code reasonably implements the task requirements
+- "passed": false if critical requirements are missing or the implementation is fundamentally wrong
+- Be pragmatic — minor style issues or missing edge cases should still pass
+- Only fail for genuinely missing functionality or broken implementations` },
+    { role: 'user', content: `## Task
+**Title:** ${task.title}
+**Description:** ${task.description || 'N/A'}
+${task.acceptanceCriteria ? `**Acceptance Criteria:**\n${Array.isArray(task.acceptanceCriteria) ? task.acceptanceCriteria.map(c => `- ${c}`).join('\n') : task.acceptanceCriteria}` : ''}
+
+## SRS Context (abbreviated)
+${(projectContext.srs || '').substring(0, 2000)}
+
+## Files Produced (${allFiles.length} total)
+${filesSummary}
+
+Does this code fulfill the task requirements? Respond with JSON only.` },
+  ];
+
+  try {
+    const { rawOutput } = await _runLLMCall(reviewMessages, settings, {});
+    const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { passed: true, feedback: 'Could not parse QA response — passing by default.' };
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      passed: parsed.passed !== false,
+      feedback: parsed.feedback || '',
+    };
+  } catch (e) {
+    console.warn('[QualityGate] Review failed, passing by default:', e);
+    return { passed: true, feedback: 'QA review failed to execute — passing by default.' };
+  }
+}
+
 /**
  * Executes a single task by sending it to the LLM.
  * Writes files to disk and executes commands IN REAL-TIME as the agent streams output.
@@ -422,11 +476,12 @@ async function _runLLMCall(messages, settings, callbacks = {}) {
  *   onNeedInput(question, options) => Promise<string>
  *   onFileWritten(file) — called each time a file is written to disk
  *   onCommandExecuted(cmd, result) — called each time a command finishes
+ *   onQualityGate({ passed, feedback, attempt }) — called when QualityGate runs
  *
  * @param {string} projectPath — root path where files are saved (files go to projectPath/src/...)
  */
 export async function executeTask(task, projectContext, settings, callbacks = {}, projectPath = '') {
-  const { onToken, onProgress, onComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onCommandQueued, onSyntaxError, onSyntaxRetry } = callbacks;
+  const { onToken, onProgress, onComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onCommandQueued, onSyntaxError, onSyntaxRetry, onQualityGate } = callbacks;
   const agentType = task.assignedAgent || AGENT_TYPES.BACKEND;
 
   const systemPrompt = buildAgentSystemPrompt(agentType, task, projectContext);
@@ -443,6 +498,8 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
   let syntaxErrors = []; // Collects syntax errors per turn for auto-retry
   let syntaxRetryCount = 0;
   const MAX_SYNTAX_RETRIES = 2;
+  let qualityRetryCount = 0;
+  const MAX_QUALITY_RETRIES = 2;
 
   // Incremental extractors for real-time processing
   const fileExtractor = new IncrementalFileExtractor();
@@ -562,7 +619,20 @@ export async function executeTask(task, projectContext, settings, callbacks = {}
         }
       }
 
-      // Done — no syntax errors, no need-input
+      // ─── Quality Gate: shadow review before marking done ───────────
+      if (allFiles.length > 0 && qualityRetryCount < MAX_QUALITY_RETRIES) {
+        const qa = await _runQualityGate(task, projectContext, allFiles, settings);
+        if (onQualityGate) onQualityGate({ passed: qa.passed, feedback: qa.feedback, attempt: qualityRetryCount + 1 });
+
+        if (!qa.passed) {
+          qualityRetryCount++;
+          const qaPrompt = `A QA reviewer found issues with your implementation:\n\n**Feedback:** ${qa.feedback}\n\nPlease fix the issues and output the corrected file(s) using \`\`\`file:...\`\`\` blocks. (QA attempt ${qualityRetryCount}/${MAX_QUALITY_RETRIES})`;
+          messages.push({ role: 'user', content: qaPrompt });
+          continue;
+        }
+      }
+
+      // Done — passed syntax check, quality gate, and no need-input
       if (onProgress) onProgress(100);
       if (onComplete) onComplete({ files: allFiles, commands: allCommands, rawOutput: allOutput, tokenCount });
       return { rawOutput: allOutput };
@@ -708,6 +778,22 @@ export class TaskLogger {
     this._flush(`   Error: ${err}`);
     this._flush(`────────────────────────────────────────────────────────────\n`);
   }
+
+  qualityGate({ passed, feedback, attempt }) {
+    this._flush(`[${this._ts()}] 🔍 QUALITY GATE (attempt ${attempt})`);
+    this._flush(`   Result: ${passed ? 'PASSED ✅' : 'FAILED ❌'}`);
+    if (feedback) this._flush(`   Feedback: ${feedback}`);
+  }
+
+  blocked(blockedBy) {
+    this._flush(`[${this._ts()}] 🚫 BLOCKED — waiting on task(s): ${blockedBy}`);
+  }
+
+  failureDecision(failedTasks, decision) {
+    this._flush(`[${this._ts()}] ⚠️ STOP-ON-FAILURE: ${failedTasks.length} task(s) failed`);
+    failedTasks.forEach(t => this._flush(`   - ${t.id}: ${t.error}`));
+    this._flush(`   Decision: ${decision === 'stop' ? 'STOPPED 🛑' : 'CONTINUING ▶️'}`);
+  }
 }
 
 // ─── Shared Context Summary ──────────────────────────────────────────────────
@@ -800,7 +886,7 @@ function _buildTaskSummary(task, files, exports, technologies, commands) {
  * Executes batches sequentially, tasks within a batch in parallel.
  */
 export class CodingOrchestrator {
-  constructor({ workplan, projectContext, settings, projectPath, onTaskUpdate, onBatchComplete, onAllComplete, onError, onNeedInput, onFileWritten, onCommandExecuted }) {
+  constructor({ workplan, projectContext, settings, projectPath, onTaskUpdate, onBatchComplete, onAllComplete, onError, onNeedInput, onFileWritten, onCommandExecuted, onFailureDecision }) {
     this.workplan = workplan;
     this.projectContext = projectContext;
     this.settings = settings;
@@ -812,6 +898,7 @@ export class CodingOrchestrator {
     this.onNeedInput = onNeedInput || null;
     this.onFileWritten = onFileWritten || null;
     this.onCommandExecuted = onCommandExecuted || null;
+    this.onFailureDecision = onFailureDecision || null; // async (task, plan) => 'continue' | 'stop'
 
     this.executionPlan = buildExecutionPlan(workplan);
     this.batches = buildParallelBatches(this.executionPlan);
@@ -862,6 +949,17 @@ export class CodingOrchestrator {
 
         const batch = this.batches[batchIdx];
 
+        // Mark tasks in upcoming batches as BLOCKED (waiting on this batch)
+        for (let futureIdx = batchIdx + 1; futureIdx < this.batches.length; futureIdx++) {
+          for (const futureTask of this.batches[futureIdx]) {
+            if (futureTask.status === 'pending') {
+              futureTask.status = 'blocked';
+              futureTask._blockedBy = batch.map(t => t.id).join(', ');
+              this.onTaskUpdate(futureTask, this.executionPlan);
+            }
+          }
+        }
+
         // Mark all tasks in batch as running
         for (const task of batch) {
           task.status = 'running';
@@ -872,6 +970,52 @@ export class CodingOrchestrator {
         // Execute all tasks in batch in parallel
         const promises = batch.map((task) => this._executeTask(task));
         await Promise.allSettled(promises);
+
+        // Unblock next batch tasks
+        if (batchIdx + 1 < this.batches.length) {
+          for (const nextTask of this.batches[batchIdx + 1]) {
+            if (nextTask.status === 'blocked') {
+              nextTask.status = 'pending';
+              delete nextTask._blockedBy;
+              this.onTaskUpdate(nextTask, this.executionPlan);
+            }
+          }
+        }
+
+        // ─── Stop-on-Failure: check if any task in this batch failed ───
+        const failedTasks = batch.filter(t => t.status === 'error');
+        if (failedTasks.length > 0) {
+          // Mark all remaining tasks as blocked
+          for (let futureIdx = batchIdx + 1; futureIdx < this.batches.length; futureIdx++) {
+            for (const futureTask of this.batches[futureIdx]) {
+              futureTask.status = 'blocked';
+              futureTask._blockedBy = failedTasks.map(t => t.id).join(', ');
+              this.onTaskUpdate(futureTask, this.executionPlan);
+            }
+          }
+
+          // Ask user what to do
+          if (this.onFailureDecision) {
+            const failSummary = failedTasks.map(t => `- Task "${t.title}" (${t.id}): ${t.error}`).join('\n');
+            const decision = await this.onFailureDecision(failedTasks, this.executionPlan, failSummary);
+
+            if (decision === 'stop') {
+              this.isCancelled = true;
+              // Keep remaining tasks as blocked
+              break;
+            }
+            // decision === 'continue' — unblock and proceed
+            for (let futureIdx = batchIdx + 1; futureIdx < this.batches.length; futureIdx++) {
+              for (const futureTask of this.batches[futureIdx]) {
+                if (futureTask.status === 'blocked') {
+                  futureTask.status = 'pending';
+                  delete futureTask._blockedBy;
+                  this.onTaskUpdate(futureTask, this.executionPlan);
+                }
+              }
+            }
+          }
+        }
 
         this.onBatchComplete(batchIdx, this.batches.length);
       }
@@ -961,6 +1105,10 @@ export class CodingOrchestrator {
           this.onTaskUpdate(task, this.executionPlan);
           if (this.onCommandExecuted) this.onCommandExecuted(task, cmd, result);
         },
+        onQualityGate: (result) => {
+          logger.qualityGate(result);
+          this.onTaskUpdate(task, this.executionPlan);
+        },
       }, this.projectPath);
     } catch (err) {
       task.status = 'error';
@@ -1003,6 +1151,49 @@ export class CodingOrchestrator {
   }
 
   /**
+   * Asks the LLM to extract structured entities from task output as JSON.
+   * Returns { functions, components, apiRoutes, envVars } or null on failure.
+   */
+  async _generateEntityIndex(task, files) {
+    if (files.length === 0) return null;
+
+    // Build compact code snippets — export lines, route definitions, env references
+    const snippets = files.slice(0, 8).map(f => {
+      const lines = (f.content || '').split('\n');
+      const relevant = lines.filter(l =>
+        /^export\s/.test(l.trim()) ||
+        /\.(get|post|put|patch|delete|use)\s*\(/.test(l) ||
+        /router\.(get|post|put|patch|delete)/.test(l) ||
+        /process\.env\./.test(l) ||
+        /import\.meta\.env\./.test(l)
+      ).slice(0, 10);
+      return `// ${f.path}\n${relevant.join('\n') || '(no key lines found)'}`;
+    }).join('\n\n');
+
+    const indexMessages = [
+      { role: 'system', content: `You are a code indexer. Respond with ONLY valid JSON, no markdown, no explanation. The JSON must have exactly these keys: "functions", "components", "apiRoutes", "envVars". Each value is an array of objects with "name" and "file" keys.` },
+      { role: 'user', content: `Extract the key entities from this code produced by task "${task.title}":\n\n${snippets}\n\nReturn JSON with:\n- functions: exported functions/classes\n- components: React components\n- apiRoutes: API endpoints (include method + path)\n- envVars: environment variables referenced` },
+    ];
+
+    try {
+      const { rawOutput } = await _runLLMCall(indexMessages, this.settings, {});
+      // Extract JSON from response (handle possible markdown wrapping)
+      const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        functions: Array.isArray(parsed.functions) ? parsed.functions : [],
+        components: Array.isArray(parsed.components) ? parsed.components : [],
+        apiRoutes: Array.isArray(parsed.apiRoutes) ? parsed.apiRoutes : [],
+        envVars: Array.isArray(parsed.envVars) ? parsed.envVars : [],
+      };
+    } catch (e) {
+      console.warn('[CodingOrchestrator] Entity index generation failed:', e);
+      return null;
+    }
+  }
+
+  /**
    * Updates docs/context_summary.json with newly created files, exports, and technologies.
    * Merges with existing summary so all agents share cumulative knowledge.
    */
@@ -1010,7 +1201,7 @@ export class CodingOrchestrator {
     if (!this._contextSummaryPath || files.length === 0) return;
     try {
       // Load existing summary
-      let summary = { files: [], exports: [], technologies: [], completedTasks: [] };
+      let summary = { files: [], exports: [], technologies: [], completedTasks: [], entities: { functions: [], components: [], apiRoutes: [], envVars: [] } };
       try {
         const raw = await api.readFile(this._contextSummaryPath);
         if (raw) summary = { ...summary, ...JSON.parse(raw) };
@@ -1051,6 +1242,27 @@ export class CodingOrchestrator {
         llmSummary = await this._generateLLMSummary(task, files);
       } catch (e) {
         console.warn('[CodingOrchestrator] LLM summary failed, using deterministic:', e);
+      }
+
+      // Ask LLM to extract structured entities (functions, components, API routes, env vars)
+      try {
+        const entities = await this._generateEntityIndex(task, files);
+        if (entities) {
+          if (!summary.entities) summary.entities = { functions: [], components: [], apiRoutes: [], envVars: [] };
+          const dedup = (arr, newItems) => {
+            const existing = new Set(arr.map(e => `${e.name}@${e.file}`));
+            for (const item of newItems) {
+              const key = `${item.name}@${item.file}`;
+              if (!existing.has(key)) { arr.push(item); existing.add(key); }
+            }
+          };
+          dedup(summary.entities.functions, entities.functions);
+          dedup(summary.entities.components, entities.components);
+          dedup(summary.entities.apiRoutes, entities.apiRoutes);
+          dedup(summary.entities.envVars, entities.envVars);
+        }
+      } catch (e) {
+        console.warn('[CodingOrchestrator] Entity index merge failed:', e);
       }
 
       // Track completed task

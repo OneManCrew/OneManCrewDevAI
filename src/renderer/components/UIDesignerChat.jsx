@@ -45,6 +45,8 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
 
   const docsPath = projectPath ? projectPath.replace(/[\\/]$/, '') + '/docs' : null;
   const uiPath = projectPath ? projectPath.replace(/[\\/]$/, '') + '/src/components/generated_ui' : null;
+  const themePath = projectPath ? projectPath.replace(/[\\/]$/, '') + '/src/theme' : null;
+  const colorsPath = themePath ? themePath + '/colors.json' : null;
 
   // ─── Reset all state when projectPath changes (workspace switch) ──────
   const prevPathRef = useRef(projectPath);
@@ -165,7 +167,16 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
           hldExists ? api.readFile(docsPath + '/HLD.md') : Promise.resolve(null),
         ]);
 
-        setContextDocs({ srs: srs || null, hld: hld || null });
+        // Load existing design tokens if available
+        let designTokens = null;
+        if (colorsPath) {
+          try {
+            const colorsRaw = await api.readFile(colorsPath);
+            if (colorsRaw) designTokens = JSON.parse(colorsRaw);
+          } catch (e) { /* no tokens yet */ }
+        }
+
+        setContextDocs({ srs: srs || null, hld: hld || null, designTokens });
 
         // Check for existing generated UI components (resume support)
         const uiDirExists = uiPath ? await api.exists(uiPath) : false;
@@ -210,6 +221,18 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
       return updated;
     });
   }, []);
+
+  // ─── Save design tokens ───────────────────────────────────────
+  const saveDesignTokens = useCallback(async (tokens) => {
+    if (!colorsPath || !tokens) return;
+    try {
+      await api.safeWriteFile(colorsPath, JSON.stringify(tokens, null, 2));
+      setContextDocs(prev => ({ ...prev, designTokens: tokens }));
+      addMessage('system', 'Design tokens saved to src/theme/colors.json.');
+    } catch (err) {
+      console.error('Failed to save design tokens:', err);
+    }
+  }, [colorsPath, addMessage]);
 
   // ─── Save UI component files ─────────────────────────────────────
   const saveComponents = useCallback(async (components) => {
@@ -336,18 +359,23 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
             }
           }
 
-          // Extract and save UI component files
-          if (currentPhase === UI_PHASES.DESIGN || currentPhase === UI_PHASES.REVIEW || currentPhase === UI_PHASES.DONE) {
-            const output = parseUIDesignerOutput(fullResponse);
-            if (output.components.length > 0) {
-              await saveComponents(output.components);
-              const names = output.components.map(c => c.filename).join(', ');
-              if (currentPhase === UI_PHASES.DESIGN) {
-                setPhase(UI_PHASES.REVIEW);
-                addMessage('system', `UI components generated! ${output.components.length} files saved to src/components/generated_ui/ (${names}). Review and provide feedback.`);
-              } else {
-                addMessage('system', `UI updated. ${output.components.length} component(s) saved (${names}).`);
-              }
+          // Extract and save design tokens + UI component files
+          const output = parseUIDesignerOutput(fullResponse);
+
+          // Save design tokens if present (typically during DISCOVERY)
+          if (output.designTokens) {
+            await saveDesignTokens(output.designTokens);
+          }
+
+          // Save component files
+          if ((currentPhase === UI_PHASES.DESIGN || currentPhase === UI_PHASES.REVIEW || currentPhase === UI_PHASES.DONE) && output.components.length > 0) {
+            await saveComponents(output.components);
+            const names = output.components.map(c => c.filename).join(', ');
+            if (currentPhase === UI_PHASES.DESIGN) {
+              setPhase(UI_PHASES.REVIEW);
+              addMessage('system', `UI components generated! ${output.components.length} files saved to src/components/generated_ui/ (${names}). Review and provide feedback.`);
+            } else {
+              addMessage('system', `UI updated. ${output.components.length} component(s) saved (${names}).`);
             }
           }
         },
@@ -362,7 +390,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     } finally {
       setIsStreaming(false);
     }
-  }, [projectPath, agentSettings, contextDocs, addMessage, updateLastAssistant, saveComponents]);
+  }, [projectPath, agentSettings, contextDocs, addMessage, updateLastAssistant, saveComponents, saveDesignTokens]);
 
   // ─── Auto-trigger design generation ──────────────────────────────────────
   const triggerDesign = useCallback(async () => {
@@ -385,6 +413,9 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
           updateLastAssistant(fullResponse);
 
           const output = parseUIDesignerOutput(fullResponse);
+          if (output.designTokens) {
+            await saveDesignTokens(output.designTokens);
+          }
           if (output.components.length > 0) {
             await saveComponents(output.components);
             const names = output.components.map(c => c.filename).join(', ');
@@ -399,7 +430,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     } finally {
       setIsStreaming(false);
     }
-  }, [agentSettings, contextDocs, addMessage, updateLastAssistant, saveComponents]);
+  }, [agentSettings, contextDocs, addMessage, updateLastAssistant, saveComponents, saveDesignTokens]);
 
   // ─── Quick reply handler (from option buttons) ─────────────────────────
   const handleQuickReply = async (value) => {
