@@ -116,15 +116,16 @@ Produce a structured summary that covers:
 
 The user has approved your analysis. Now generate the full documentation.
 
-### You MUST produce TWO documents, each wrapped in clearly marked fences:
-
-\`\`\`srs
-# Software Requirements Specification (SRS)
-... full content ...
-\`\`\`
+### You MUST produce TWO documents, each wrapped in clearly marked fences.
+**OUTPUT ORDER: HLD FIRST, then SRS.** The HLD is the larger document — output it first to avoid truncation.
 
 \`\`\`hld
 # High-Level Design (HLD)
+... full content ...
+\`\`\`
+
+\`\`\`srs
+# Software Requirements Specification (SRS)
 ... full content ...
 \`\`\`
 
@@ -231,22 +232,23 @@ The SRS.md and HLD.md documents have been generated and saved. The user may now 
 ### Instructions:
 1. Listen to the user's feedback or change requests.
 2. If the user asks for changes to the documents, produce the UPDATED version.
-3. **CRITICAL RULE — Always produce BOTH documents together.** Every time you output a document, you MUST output BOTH the SRS and HLD fences in the same response. Never output just one. This ensures both files stay in sync and are saved to disk together.
-4. Wrap documents in fences:
-
-\`\`\`srs
-# Software Requirements Specification (SRS)
-... full content ...
-\`\`\`
+3. **CRITICAL RULE — Always produce BOTH documents together.** Every time you output a document, you MUST output BOTH the HLD and SRS fences in the same response. Never output just one. This ensures both files stay in sync and are saved to disk together.
+4. **OUTPUT ORDER: HLD FIRST, then SRS.** Always start with the HLD — it is the larger document and must not be truncated.
+5. Wrap documents in fences:
 
 \`\`\`hld
 # High-Level Design (HLD)
 ... full content ...
 \`\`\`
 
-5. The ONLY exception: if the user explicitly says "update only the SRS" or "update only the HLD", you may output just that one document. But if the user says "re-generate", "update", "save", or any general request — output BOTH.
-6. If the user asks a question (not a change request), answer it conversationally without outputting document fences.
-7. Always output the COMPLETE document content, not just the changed sections — the output will replace the entire file.
+\`\`\`srs
+# Software Requirements Specification (SRS)
+... full content ...
+\`\`\`
+
+6. The ONLY exception: if the user explicitly says "update only the SRS" or "update only the HLD", you may output just that one document. But if the user says "re-generate", "update", "save", or any general request — output BOTH.
+7. If the user asks a question (not a change request), answer it conversationally without outputting document fences.
+8. Always output the COMPLETE document content, not just the changed sections — the output will replace the entire file.
 
 ### Important:
 - Be responsive and collaborative.

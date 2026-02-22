@@ -257,7 +257,11 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
                 pendingFollowUpKeyRef.current = missingKey;
                 setTimeout(() => {
                   sendToLLM(
-                    `You only produced the ${docs.srs ? 'SRS' : 'HLD'} document but NOT the ${missingDoc}. You MUST now output the complete ${missingDoc} wrapped in a ${missingFence} fence. Output ONLY the ${missingDoc} document now.`,
+                    `IMPORTANT: You did NOT produce the ${missingDoc} document in your previous response. I need it NOW.\n\n` +
+                    `DO NOT output an SRS document. DO NOT use \`\`\`srs fences.\n` +
+                    `You MUST output ONLY the ${missingDoc} document, wrapped in:\n\n` +
+                    `${missingFence}\n# ${missingDoc === 'HLD' ? 'High-Level Design (HLD)' : 'Software Requirements Specification (SRS)'}\n... complete content ...\n\`\`\`\n\n` +
+                    `Start your response with ${missingFence} immediately. No other text before it.`,
                     PHASES.DONE,
                     { showUserMsg: false }
                   );
