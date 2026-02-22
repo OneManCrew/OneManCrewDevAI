@@ -171,17 +171,23 @@ The user has approved your analysis. Now generate the full documentation.
   }
   \`\`\`
   This JSON block will be consumed by downstream agents to auto-generate package.json.
-- **Core Files**: A section listing every file that MUST exist for the application to run. For each file, specify its path and purpose. Example:
-  | File | Purpose |
-  |------|---------|
-  | \`main.js\` | Electron main process — creates BrowserWindow, loads index.html |
-  | \`index.html\` | Main HTML entry point |
-  | \`src/main.jsx\` | React entry point (renders App into DOM) |
-  | \`src/App.jsx\` | Root React component |
-  | \`vite.config.js\` | Vite bundler configuration |
-  | \`tailwind.config.js\` | Tailwind CSS configuration |
-  | \`package.json\` | Dependencies, scripts, and project metadata |
-  Adjust this list based on the actual tech stack. The Setup Engineer will use this list to verify all core files are created.
+- **Core Files**: A section listing every file that MUST exist for the application to run. For each file, specify its path, purpose, and whether it is **checked by the integration validator**. Example:
+  | File | Purpose | Integration Check |
+  |------|---------|-------------------|
+  | \`main.js\` | Electron main process — creates BrowserWindow, loads index.html | ✅ Verified: must exist, must pass \`node --check\`, \`loadFile\` path must resolve |
+  | \`index.html\` | Main HTML entry point | ✅ Verified: all \`<script src>\` and \`<link href>\` must point to existing files |
+  | \`src/main.jsx\` | React entry point (renders App into DOM) | ✅ Verified: must exist, referenced by index.html |
+  | \`src/App.jsx\` | Root React component | — |
+  | \`vite.config.js\` | Vite bundler configuration | — |
+  | \`tailwind.config.js\` | Tailwind CSS configuration | — |
+  | \`package.json\` | Dependencies, scripts, and project metadata | ✅ Verified: \`main\` field, \`start\`/\`dev\`/\`build\` scripts must exist |
+  Adjust this list based on the actual tech stack. The Setup Engineer will use this list to verify all core files are created. Files marked with ✅ are automatically validated by \`run_integration_check\` at the end of every build phase.
+- **Integration Checkpoints**: A section defining what the automated \`run_integration_check\` tool will verify at the end of each development phase. List the specific checks that apply to this project:
+  1. **HTML Import Integrity** — Every \`<script src="...">\` and \`<link href="...">\` in the main HTML file must point to a file that exists on disk
+  2. **package.json Validity** — The \`"main"\` field must point to an existing file; \`start\`, \`dev\`, and \`build\` scripts must be defined
+  3. **Electron Entry Point** (if applicable) — \`main.js\` must exist, must pass \`node --check\`, and its \`loadFile()\`/\`loadURL()\` must reference a valid HTML file
+  4. **Core File Existence** — All files marked ✅ in the Core Files table above must exist on disk
+  If any check fails, the system will automatically create a bug ticket and dispatch the appropriate agent to fix it — no user intervention required. The Architect should add any project-specific checks beyond these defaults (e.g., API health endpoint, database migration file, etc.).
 - **Mermaid.js Diagrams**: At minimum include:
   - System architecture diagram
   - Data flow diagram
