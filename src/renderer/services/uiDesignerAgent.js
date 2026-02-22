@@ -1,6 +1,6 @@
 // ─── UI Designer Agent ─────────────────────────────────────────────────────────
 // Phase-based conversational agent for UI/UX design.
-// Reads SRS.md + HLD.md from previous stage, generates React + Tailwind components.
+// Reads SRS.md + HLD.md from previous stage, generates standalone HTML + CSS + JS files.
 
 import { ASK_USER_TOOL_INSTRUCTION } from './agentTools';
 
@@ -83,118 +83,120 @@ Then end your response with [UI_DISCOVERY_COMPLETE].
 
   [UI_PHASES.DESIGN]: `${BASE_PERSONA}
 
-## Your Current Task: GENERATE UI COMPONENTS
+## Your Current Task: GENERATE UI DESIGN
 
-Based on the conversation, the SRS/HLD documents, and the Design Token colors defined during discovery, generate a complete set of React functional components.
+Based on the conversation, the SRS/HLD documents, and the Design Token colors defined during discovery, generate a **complete standalone UI mockup** as plain HTML + CSS + JS files.
 
-### Standard Libraries (always available — use them):
-- **Tailwind CSS** — all styling via utility classes
-- **Lucide React** — icons (import from 'lucide-react'). Use Lucide icons for ALL icons: navigation, actions, status indicators, etc.
-- **Framer Motion** — animations (import { motion, AnimatePresence } from 'framer-motion'). Use for page transitions, modal enter/exit, hover scale effects, and list animations.
-
-### Design System:
-You MUST import and use the project's design tokens from \`../theme/colors.json\` in every component:
-\`\`\`js
-import colors from '../theme/colors.json';
-\`\`\`
-Use these color values for inline style overrides where Tailwind classes are insufficient (e.g., \`style={{ color: colors.primary }}\`), or reference them to ensure consistency. For Tailwind classes, use the closest matching Tailwind color that aligns with the design tokens.
+**IMPORTANT: Do NOT use React, JSX, or any framework. Generate pure HTML, CSS, and vanilla JavaScript only.**
 
 ### Output Format:
-Output each component as a SEPARATE fenced code block with the tag \`jsx:ComponentName.jsx\`.
+Output exactly 3 files using fenced code blocks:
 
-You MUST output at minimum:
-1. A main layout/app shell component
-2. Individual page/screen components for each screen identified in the SRS
-3. Shared UI components (Navbar, Sidebar, Footer, etc.)
+1. \`\`\`html:index.html\`\`\` — The complete HTML structure
+2. \`\`\`css:styles.css\`\`\` — All styles
+3. \`\`\`js:app.js\`\`\` — All interactivity
 
-Example:
-
-\`\`\`jsx:AppShell.jsx
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Home, Settings, Menu } from 'lucide-react';
-import colors from '../theme/colors.json';
-import Sidebar from './Sidebar';
-import Dashboard from './Dashboard';
-export default function AppShell() {
-  // ...
+### Design System:
+Use the design token colors from the Discovery phase as CSS custom properties. Define them in your CSS:
+\`\`\`css
+:root {
+  --primary: #3B82F6;
+  --primary-hover: #2563EB;
+  --background: #0F172A;
+  --surface: #1E293B;
+  --text: #F8FAFC;
+  /* ... etc from colors.json */
 }
 \`\`\`
 
-\`\`\`jsx:Sidebar.jsx
-import React from 'react';
-import { motion } from 'framer-motion';
-import { LayoutDashboard, Users, Settings, LogOut } from 'lucide-react';
-import colors from '../theme/colors.json';
-export default function Sidebar({ activeItem, onNavigate }) {
+### Example:
+
+\`\`\`html:index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>App Name</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav class="sidebar">...</nav>
+  <main class="content">...</main>
+  <script src="app.js"></script>
+</body>
+</html>
+\`\`\`
+
+\`\`\`css:styles.css
+:root { --primary: #3B82F6; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Inter', system-ui, sans-serif; background: var(--background); color: var(--text); }
+/* ... */
+\`\`\`
+
+\`\`\`js:app.js
+// Navigation, modals, tab switching, etc.
+document.addEventListener('DOMContentLoaded', () => {
   // ...
-}
+});
 \`\`\`
 
 ### Design Requirements:
-1. Create COMPLETE, production-quality React functional components — not wireframes, but polished UI.
-2. Include ALL screens/pages identified in the SRS as separate components.
-3. Use React hooks (useState, useEffect, useCallback) for interactivity (tab switching, modal toggling, navigation state, etc.).
-4. Style EVERYTHING with Tailwind CSS utility classes — do NOT use inline styles or separate CSS files (except for design token color overrides).
-5. Use modern Tailwind patterns: flexbox, grid, responsive prefixes (sm:, md:, lg:), dark mode support.
-6. Include realistic placeholder content (not "Lorem ipsum" — use contextually appropriate text).
-7. Ensure responsive design with Tailwind breakpoints.
-8. Add hover states (hover:), focus states (focus:), and transitions via Framer Motion.
-9. Use Lucide React icons throughout — never use raw SVGs or emoji as icons.
-10. Include proper typography hierarchy (text-xs, text-sm, text-lg, font-semibold, etc.).
-11. Use Framer Motion for: page/route transitions, modal/dialog enter-exit, list item stagger animations, and subtle hover effects (whileHover, whileTap).
+1. Create a COMPLETE, production-quality UI mockup — not a wireframe, but a polished design.
+2. Include ALL screens/pages identified in the SRS. Use JS to switch between them (tab/navigation pattern).
+3. Use CSS custom properties (var(--primary), etc.) for all design token colors.
+4. Use modern CSS: flexbox, grid, media queries for responsive design, transitions, animations.
+5. Include realistic placeholder content (not "Lorem ipsum" — use contextually appropriate text).
+6. Add hover states, focus states, and smooth CSS transitions.
+7. Use SVG icons inline or via simple CSS shapes — do NOT rely on any icon library CDN.
+8. Include proper typography hierarchy with font sizes, weights, and spacing.
+9. Make it responsive with media queries.
+10. Add interactivity with vanilla JS: navigation between pages, modal open/close, tab switching, form validation, etc.
 
 ### Rules:
-- Every component must be a complete, self-contained file with all imports and exports.
-- Use \`export default function ComponentName()\` pattern.
-- Every component MUST import colors from '../theme/colors.json'.
-- Every component MUST use Lucide React for icons.
-- Props should be destructured with sensible defaults.
-- Include brief inline comments only where logic is complex.
-- Do NOT use any CSS files — Tailwind classes only.
-- Do NOT use class components — functional components with hooks only.
-- Files will be saved to \`src/components/generated_ui/\`.`,
-
+- The HTML file MUST link to styles.css and app.js (relative paths).
+- The CSS file MUST define all styles — no inline styles in HTML.
+- The JS file MUST handle all interactivity — no inline event handlers in HTML (use addEventListener).
+- Do NOT use any external CDN, framework, or library. Pure HTML + CSS + JS only.
+- Do NOT use Tailwind, React, Vue, or any other framework.
+- Files will be saved to \`src/components/generated_ui/\` and the HTML will be opened directly in the preview window.`,
 
   [UI_PHASES.REVIEW]: `${BASE_PERSONA}
 
 ## Your Current Task: UI REVIEW & MODIFICATIONS
 
-The React components have been generated and saved to \`src/components/generated_ui/\`.
-The user is reviewing them and may request changes, additions, or fixes.
-
-### Standard Libraries (always use):
-- **Tailwind CSS** for styling
-- **Lucide React** for icons (import from 'lucide-react')
-- **Framer Motion** for animations (import from 'framer-motion')
-- **Design Tokens** from '../theme/colors.json' for consistent colors
+The UI files (index.html, styles.css, app.js) have been generated and saved to \`src/components/generated_ui/\`.
+The user is reviewing them in the preview window and may request changes, additions, or fixes.
 
 ### Instructions:
 1. Listen to the user's feedback carefully.
-2. When making changes, output the COMPLETE updated component(s) using the same format:
+2. When making changes, output the COMPLETE updated file(s) using the same format:
 
-\`\`\`jsx:ComponentName.jsx
-import React from 'react';
-import { motion } from 'framer-motion';
-import { IconName } from 'lucide-react';
-import colors from '../theme/colors.json';
-export default function ComponentName() {
-  // ...
-}
+\`\`\`html:index.html
+<!DOCTYPE html>
+<!-- Complete updated HTML -->
 \`\`\`
 
-3. Only output the component(s) that need changes — no need to re-output unchanged files.
+\`\`\`css:styles.css
+/* Complete updated CSS */
+\`\`\`
+
+\`\`\`js:app.js
+// Complete updated JS
+\`\`\`
+
+3. Only output the file(s) that need changes — no need to re-output unchanged files.
 4. If the user asks a question (not a change), respond conversationally without code blocks.
 5. Be proactive — suggest improvements you notice.
 
 ### Important:
-- Output the FULL component contents, not patches or diffs.
+- Output the FULL file contents, not patches or diffs.
 - Maintain all existing functionality when making changes.
 - Keep the design cohesive when adding new elements.
-- All styling must use Tailwind CSS utility classes.
-- All icons must use Lucide React.
-- All colors must reference the design tokens from colors.json.`,
-
+- Use CSS custom properties for design token colors.
+- Do NOT use any external CDN, framework, or library. Pure HTML + CSS + JS only.
+- Do NOT use React, Tailwind, or any framework.`,
 
   [UI_PHASES.DONE]: `${BASE_PERSONA}
 
@@ -202,14 +204,19 @@ export default function ComponentName() {
 
 The UI design has been approved. You can still make final adjustments if the user requests them.
 Follow the same output format as the Review phase for any changes.
-Continue using Lucide React for icons, Framer Motion for animations, and colors from '../theme/colors.json'.
+Use pure HTML + CSS + JS only. No frameworks or CDNs.
 
-\`\`\`jsx:ComponentName.jsx
-import { motion } from 'framer-motion';
-import { IconName } from 'lucide-react';
-import colors from '../theme/colors.json';
-// Complete updated component if changes needed
-\`\`\``,
+\`\`\`html:index.html
+<!-- Complete updated HTML if changes needed -->
+\`\`\`
+
+\`\`\`css:styles.css
+/* Complete updated CSS if changes needed */
+\`\`\`
+
+\`\`\`js:app.js
+// Complete updated JS if changes needed
+\`\`\`,
 
 };
 
@@ -225,17 +232,19 @@ export function detectUIPhaseTransition(responseText, currentPhase) {
 // ─── Output Parser ─────────────────────────────────────────────────────────────
 
 /**
- * Extracts React component blocks from agent output.
- * Looks for ```jsx:ComponentName.jsx or ```tsx:ComponentName.tsx blocks.
- * Returns { components: [{ filename, content }] }
+ * Extracts UI files from agent output.
+ * Looks for fenced code blocks tagged html:, css:, js:, jsx:, tsx: with filenames.
+ * Returns { components: [{ filename, content }], designTokens }
  */
 export function parseUIDesignerOutput(text) {
   const result = { components: [], designTokens: null };
 
-  // Extract jsx/tsx component blocks
-  const jsxRegex = /```(?:jsx|tsx):([^\n`]+)\n([\s\S]*?)```/g;
+  // Extract html/css/js/jsx/tsx file blocks
+  const BT = String.fromCharCode(96); // backtick
+  const fence = BT + BT + BT;
+  const fileRegex = new RegExp(fence + '(?:html|css|js|jsx|tsx):([^\\n' + BT + ']+)\\n([\\s\\S]*?)' + fence, 'g');
   let match;
-  while ((match = jsxRegex.exec(text)) !== null) {
+  while ((match = fileRegex.exec(text)) !== null) {
     const filename = match[1].trim();
     const content = match[2].trim();
     if (filename && content) {
@@ -244,7 +253,7 @@ export function parseUIDesignerOutput(text) {
   }
 
   // Extract json:colors.json design token block
-  const jsonRegex = /```json:colors\.json\n([\s\S]*?)```/;
+  const jsonRegex = new RegExp(fence + 'json:colors\\.json\\n([\\s\\S]*?)' + fence);
   const jsonMatch = text.match(jsonRegex);
   if (jsonMatch) {
     try {
