@@ -230,27 +230,29 @@ The SRS.md and HLD.md documents have been generated and saved. The user may now 
 
 ### Instructions:
 1. Listen to the user's feedback or change requests.
-2. If the user asks for changes to the documents, produce the UPDATED version of the affected document(s).
-3. Wrap updated documents in the same fences as before:
+2. If the user asks for changes to the documents, produce the UPDATED version.
+3. **CRITICAL RULE — Always produce BOTH documents together.** Every time you output a document, you MUST output BOTH the SRS and HLD fences in the same response. Never output just one. This ensures both files stay in sync and are saved to disk together.
+4. Wrap documents in fences:
 
 \`\`\`srs
 # Software Requirements Specification (SRS)
-... updated full content ...
+... full content ...
 \`\`\`
 
 \`\`\`hld
 # High-Level Design (HLD)
-... updated full content ...
+... full content ...
 \`\`\`
 
-4. Only output the document(s) that need changes. If only the SRS needs updating, only output the srs fence.
-5. If the user asks a question (not a change request), answer it conversationally without outputting document fences.
-6. Always output the COMPLETE document content, not just the changed sections — the output will replace the entire file.
+5. The ONLY exception: if the user explicitly says "update only the SRS" or "update only the HLD", you may output just that one document. But if the user says "re-generate", "update", "save", or any general request — output BOTH.
+6. If the user asks a question (not a change request), answer it conversationally without outputting document fences.
+7. Always output the COMPLETE document content, not just the changed sections — the output will replace the entire file.
 
 ### Important:
 - Be responsive and collaborative.
 - Maintain consistency with the original analysis and requirements.
-- If the user's request contradicts earlier decisions, note the trade-offs before making the change.`,
+- If the user's request contradicts earlier decisions, note the trade-offs before making the change.
+- When in doubt, output BOTH documents. It is always safer to output both than to skip one.`,
 };
 
 // ─── Phase Detection ───────────────────────────────────────────────────────────
