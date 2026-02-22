@@ -289,15 +289,15 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         'createRef','Component','PureComponent','StrictMode','startTransition',
       ]);
 
+      const _globalDeclared = new Set(); // shared across all components in single script block
       function prepareForBrowser(code, fileName) {
         let c = code;
-        const declared = new Set();
         const preambleLines = [];
         console.log(`🎨 [Preview:prepare] ${fileName} — imports:`);
 
         function addDecl(name, expr) {
-          if (declared.has(name)) return;
-          declared.add(name);
+          if (_globalDeclared.has(name)) return;
+          _globalDeclared.add(name);
           preambleLines.push(`const ${name} = ${expr};`);
           console.log(`🎨 [Preview:prepare]   ${name} = ${expr}`);
         }
@@ -373,10 +373,24 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
       const orderedComponents = components.filter(c => c !== mainComponent && c !== indexFile);
       orderedComponents.push(mainComponent); // main last so it can reference others
 
-      const componentScripts = orderedComponents.map(c => {
-        const prepared = prepareForBrowser(c.content, c.name.replace(/\.(jsx|tsx)$/, ''));
-        return `<script type="text/babel">\n${prepared}\n<\/script>`;
-      }).join('\n');
+      // Combine all components into a single Babel block to share scope
+      const allPrepared = orderedComponents.map(c => {
+        return '// ── ' + c.name + ' ──\n' + prepareForBrowser(c.content, c.name.replace(/\.(jsx|tsx)$/, ''));
+      }).join('\n\n');
+
+      const componentScripts = `<script type="text/babel">
+${allPrepared}
+
+// ── Render ──
+try {
+  const _root = ReactDOM.createRoot(document.getElementById('root'));
+  const _Main = window.${mainName} || ${mainName};
+  _root.render(React.createElement(_Main));
+} catch (err) {
+  document.getElementById('preview-error').style.display = 'block';
+  document.getElementById('preview-error').textContent = 'Render error: ' + err.message + '\\n\\n' + err.stack;
+}
+<\/script>`;
 
       const previewHtml = `<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -446,17 +460,6 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   <\/script>
 
   ${componentScripts}
-
-  <script type="text/babel">
-    try {
-      const root = ReactDOM.createRoot(document.getElementById('root'));
-      const MainApp = window.${mainName} || ${mainName};
-      root.render(React.createElement(MainApp));
-    } catch (err) {
-      document.getElementById('preview-error').style.display = 'block';
-      document.getElementById('preview-error').textContent = 'Render error: ' + err.message + '\\n\\n' + err.stack;
-    }
-  <\/script>
 
   <script>
     // Catch Babel compilation errors
