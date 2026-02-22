@@ -254,6 +254,92 @@ export function isDLApproval(userMessage) {
   return approvalPatterns.some((p) => p.test(msg));
 }
 
+// ─── Workplan Normalizer ─────────────────────────────────────────────────────
+// Different LLMs produce different JSON field names. This normalizer converts
+// any format to the expected schema used by TaskBoard and CodingPhase.
+
+export function normalizeWorkplan(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+
+  const plan = {};
+
+  // Normalize header fields
+  plan.projectName = raw.projectName || raw['project-name'] ||
+    (raw['plan-header'] && (raw['plan-header'].projectName || raw['plan-header']['project-name'])) || 'Untitled Project';
+  plan.generatedAt = raw.generatedAt || raw['generated-date'] || raw['generatedAt'] ||
+    (raw['plan-header'] && (raw['plan-header'].generatedAt || raw['plan-header']['generated-date'])) || new Date().toISOString();
+
+  // Normalize phases
+  const rawPhases = raw.phases || [];
+  plan.phases = rawPhases.map((p, pi) => {
+    const phase = {
+      id: p.id || `phase-${pi + 1}`,
+      name: p.name || p['phase-name'] || `Phase ${pi + 1}`,
+      description: p.description || p['phase-description'] || '',
+      order: p.order || pi + 1,
+      tasks: [],
+    };
+
+    const rawTasks = p.tasks || [];
+    phase.tasks = rawTasks.map((t, ti) => {
+      // Parse estimated hours from various formats
+      let hours = t.estimatedHours || 0;
+      if (!hours && t['estimated-effort']) {
+        const m = String(t['estimated-effort']).match(/(\d+)/);
+        if (m) hours = parseInt(m[1], 10);
+      }
+
+      return {
+        id: String(t.id || `task-${pi + 1}-${ti + 1}`),
+        phaseId: phase.id,
+        title: t.title || t['task-name'] || `Task ${ti + 1}`,
+        description: t.description || t['task-description'] || '',
+        category: t.category || guessCategory(t.title || t['task-name'] || ''),
+        priority: (t.priority || 'medium').toLowerCase(),
+        order: t.order || ti + 1,
+        estimatedHours: hours,
+        dependencies: (t.dependencies || []).map(String),
+        acceptanceCriteria: t.acceptanceCriteria || [],
+        technicalNotes: t.technicalNotes || '',
+        tags: t.tags || [],
+        status: (t.status || 'pending').toLowerCase().replace(/\s+/g, '_').replace('not_started', 'pending'),
+      };
+    });
+
+    return phase;
+  });
+
+  // Build summary
+  const totalTasks = plan.phases.reduce((sum, p) => sum + p.tasks.length, 0);
+  const totalHours = plan.phases.reduce((sum, p) =>
+    sum + p.tasks.reduce((s, t) => s + (t.estimatedHours || 0), 0), 0);
+  const catCounts = {};
+  plan.phases.forEach(p => p.tasks.forEach(t => {
+    catCounts[t.category] = (catCounts[t.category] || 0) + 1;
+  }));
+
+  plan.summary = raw.summary || {
+    totalTasks,
+    totalEstimatedHours: totalHours,
+    criticalPath: [],
+    categories: catCounts,
+  };
+
+  return plan;
+}
+
+function guessCategory(title) {
+  const t = title.toLowerCase();
+  if (/setup|init|config|scaffold|install|environment|repository/.test(t)) return 'setup';
+  if (/test|qa|quality|unit test|integration test/.test(t)) return 'testing';
+  if (/deploy|ci|cd|docker|build|package/.test(t)) return 'devops';
+  if (/ui|frontend|component|layout|style|css|responsive|design|theme|font|animation/.test(t)) return 'frontend';
+  if (/api|backend|server|database|model|endpoint/.test(t)) return 'backend';
+  if (/doc|readme|guide/.test(t)) return 'documentation';
+  if (/integrat|connect|wire|state/.test(t)) return 'integration';
+  return 'frontend';
+}
+
 // ─── Incremental Plan Builder (streaming tool-like approach) ─────────────────
 
 /**

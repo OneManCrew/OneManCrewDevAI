@@ -3,7 +3,7 @@ import { createLLMProvider, getAgentSettings } from '../services/llmProviders';
 import {
   DL_PHASES, DL_PHASE_LABELS,
   detectDLPhaseTransition, isDLApproval, parseDevLeadOutput,
-  buildDLConversationMessages, IncrementalPlanBuilder,
+  buildDLConversationMessages, IncrementalPlanBuilder, normalizeWorkplan,
 } from '../services/devLeadAgent';
 import api from '../services/electronBridge';
 import ReactMarkdown from 'react-markdown';
@@ -143,7 +143,7 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
               try {
                 const planRaw = await api.readFile(taskPlanPath);
                 if (planRaw && planRaw.trim().length > 2) {
-                  setTaskPlan(JSON.parse(planRaw));
+                  setTaskPlan(normalizeWorkplan(JSON.parse(planRaw)));
                   hasPlan = true;
                   if (saved.phase === DL_PHASES.DONE) setView(VIEW.SPLIT);
                 }
@@ -227,7 +227,7 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
           try {
             const planRaw = await api.readFile(taskPlanPath);
             if (planRaw) {
-              setTaskPlan(JSON.parse(planRaw));
+              setTaskPlan(normalizeWorkplan(JSON.parse(planRaw)));
               setPhase(DL_PHASES.DONE);
               setView(VIEW.SPLIT);
               addMessage('system', 'Existing work plan found. You can review tasks, request changes, or approve.');
@@ -272,8 +272,9 @@ export default function DevLeadChat({ projectPath, settings, onUpdateSettings, o
   const saveTaskPlan = useCallback(async (plan) => {
     if (!devLeadPath || !plan) return;
     try {
-      setTaskPlan(plan);
-      await api.writeFile(taskPlanPath, JSON.stringify(plan, null, 2));
+      const normalized = normalizeWorkplan(plan);
+      setTaskPlan(normalized);
+      await api.writeFile(taskPlanPath, JSON.stringify(normalized, null, 2));
     } catch (err) {
       console.error('Failed to save task plan:', err);
     }

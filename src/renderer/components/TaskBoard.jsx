@@ -60,7 +60,7 @@ export default function TaskBoard({ taskPlan, onRequestChange }) {
 
   // Get unique categories from tasks
   const categories = useMemo(() => {
-    const cats = new Set(allTasks.map((t) => t.category));
+    const cats = new Set(allTasks.map((t) => t.category).filter(Boolean));
     return ['all', ...Array.from(cats).sort()];
   }, [allTasks]);
 
