@@ -336,7 +336,7 @@ export function buildCheckupMessage(projectContext, workplan, fileList) {
  * Uses the same executeTask infrastructure as the coding phase.
  */
 export async function executeBugFix(bug, projectContext, settings, projectPath, callbacks = {}) {
-  const { onProgress, onComplete, onError, onFileWritten, onCommandExecuted } = callbacks;
+  const { onProgress, onComplete, onError, onFileWritten, onCommandExecuted, onNeedInput } = callbacks;
 
   // Build a task object compatible with executeTask
   const task = {
@@ -385,6 +385,7 @@ export async function executeBugFix(bug, projectContext, settings, projectPath, 
         logger.commandExecuted(cmd, res);
         if (onCommandExecuted) onCommandExecuted(cmd, res);
       },
+      onNeedInput: onNeedInput || null,
     }, projectPath);
 
     return result;

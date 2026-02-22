@@ -185,6 +185,8 @@ export default function BugFixerChat({ projectPath, settings, onUpdateSettings, 
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [logMessages, setLogMessages] = useState([]);
+  const [pendingQuestion, setPendingQuestion] = useState(null);
+  const pendingQuestionResolveRef = useRef(null);
 
   const agentSettings = React.useMemo(() => getAgentSettings(settings, 'bug_fixer'), [settings]);
   const messagesEndRef = useRef(null);
@@ -585,6 +587,18 @@ export default function BugFixerChat({ projectPath, settings, onUpdateSettings, 
             return { ...b, fixResult: { ...b.fixResult, commands } };
           }));
         },
+        onNeedInput: (question, options) => {
+          return new Promise((resolve) => {
+            pendingQuestionResolveRef.current = resolve;
+            setPendingQuestion({ question, options });
+            setView(VIEW.CHAT);
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: `🤖 **Agent Question:**\n\n${question}${options?.length ? '\n\nOptions: ' + options.join(', ') : ''}`,
+            }]);
+            addLog(`❓ Agent asks: ${question}`, 'warning');
+          });
+        },
       });
     } catch (err) {
       setError(err.message);
@@ -609,11 +623,28 @@ export default function BugFixerChat({ projectPath, settings, onUpdateSettings, 
     await saveBugs(projectPath, []);
   }, [isStreaming, fixingBugId, projectPath]);
 
+  // ─── Handle answering a pending agent question ─────────────────────
+  const answerPendingQuestion = useCallback((answer) => {
+    if (!pendingQuestionResolveRef.current) return;
+    setMessages(prev => [...prev, { role: 'user', content: answer }]);
+    addLog(`💬 User answered: ${answer}`, 'info');
+    pendingQuestionResolveRef.current(answer);
+    pendingQuestionResolveRef.current = null;
+    setPendingQuestion(null);
+  }, [addLog]);
+
   // ─── Key handler ──────────────────────────────────────────────────────
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      if (pendingQuestion) {
+        if (input.trim()) {
+          answerPendingQuestion(input.trim());
+          setInput('');
+        }
+      } else {
+        sendMessage();
+      }
     }
   };
 
@@ -864,6 +895,31 @@ export default function BugFixerChat({ projectPath, settings, onUpdateSettings, 
                 )}
               </div>
 
+              {/* Pending question options */}
+              {pendingQuestion && (
+                <div className="shrink-0 px-4 py-2 border-t border-amber-500/30 bg-amber-500/5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="w-3.5 h-3.5 text-amber-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01" />
+                    </svg>
+                    <span className="text-[10px] font-semibold text-amber-400">Agent is waiting for your response</span>
+                  </div>
+                  {pendingQuestion.options?.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {pendingQuestion.options.map((opt, i) => (
+                        <button
+                          key={i}
+                          onClick={() => { answerPendingQuestion(opt); setInput(''); }}
+                          className="px-3 py-1.5 text-[10px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded-lg hover:bg-amber-500/25 transition-colors"
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Input */}
               <div className="shrink-0 px-4 py-3 border-t border-border bg-surface-card/30">
                 <div className="flex gap-2">
@@ -872,14 +928,29 @@ export default function BugFixerChat({ projectPath, settings, onUpdateSettings, 
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Describe the bug or issue..."
+                    placeholder={pendingQuestion ? "Type your answer to the agent..." : "Describe the bug or issue..."}
                     rows={2}
-                    className="flex-1 bg-surface border border-border rounded-lg px-3 py-2 text-xs text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:border-red-500/50 focus:ring-1 focus:ring-red-500/20"
+                    className={`flex-1 bg-surface border rounded-lg px-3 py-2 text-xs text-gray-200 placeholder-gray-600 resize-none focus:outline-none focus:ring-1 transition-colors ${
+                      pendingQuestion
+                        ? 'border-amber-500/40 focus:border-amber-500/60 focus:ring-amber-500/20'
+                        : 'border-border focus:border-red-500/50 focus:ring-red-500/20'
+                    }`}
                   />
                   <button
-                    onClick={sendMessage}
-                    disabled={!input.trim() || isStreaming}
-                    className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-semibold hover:bg-red-500/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed self-end"
+                    onClick={() => {
+                      if (pendingQuestion && input.trim()) {
+                        answerPendingQuestion(input.trim());
+                        setInput('');
+                      } else {
+                        sendMessage();
+                      }
+                    }}
+                    disabled={!input.trim() || (isStreaming && !pendingQuestion)}
+                    className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors disabled:opacity-30 disabled:cursor-not-allowed self-end ${
+                      pendingQuestion
+                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30'
+                        : 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
+                    }`}
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
