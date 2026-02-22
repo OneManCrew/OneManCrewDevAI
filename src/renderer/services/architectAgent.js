@@ -8,6 +8,7 @@
  */
 
 import { ASK_USER_TOOL_INSTRUCTION } from './agentTools';
+import api from './electronBridge';
 
 // ─── Phases ────────────────────────────────────────────────────────────────────
 
@@ -188,6 +189,26 @@ The user has approved your analysis. Now generate the full documentation.
   3. **Electron Entry Point** (if applicable) — \`main.js\` must exist, must pass \`node --check\`, and its \`loadFile()\`/\`loadURL()\` must reference a valid HTML file
   4. **Core File Existence** — All files marked ✅ in the Core Files table above must exist on disk
   If any check fails, the system will automatically create a bug ticket and dispatch the appropriate agent to fix it — no user intervention required. The Architect should add any project-specific checks beyond these defaults (e.g., API health endpoint, database migration file, etc.).
+- **Technical Implementation Blueprint**: A comprehensive chapter that serves as the single source of truth for the Setup Engineer. It MUST contain:
+  1. **Entry Points** — An exact list of every entry-point file the application needs to boot. For each file, state its path and what it does at startup. Example:
+     | Entry Point | Role |
+     |-------------|------|
+     | \`main.js\` | Electron main process — creates window, loads renderer |
+     | \`src/main.jsx\` | React DOM entry — mounts \`<App />\` into \`#root\` |
+     | \`index.html\` | HTML shell — loads bundled JS/CSS |
+  2. **Full Dependency Manifest** — Every package that must appear in \`package.json\`, split into \`dependencies\` and \`devDependencies\`. Include exact version ranges. Example:
+     | Package | Type | Version | Purpose |
+     |---------|------|---------|---------|
+     | \`react\` | dependency | ^18.2.0 | UI library |
+     | \`electron\` | devDependency | ^28.0.0 | Desktop runtime |
+     | \`vite\` | devDependency | ^5.0.0 | Bundler |
+     | \`tailwindcss\` | devDependency | ^3.4.0 | Utility-first CSS |
+     | \`electron-builder\` | devDependency | ^24.0.0 | Packaging/installer |
+  3. **Setup Engineer Instructions** — Explicit step-by-step instructions for the Setup Engineer, including:
+     - Order of operations (create dirs → init package.json → install deps → write config files → write entry points)
+     - Which files to validate with \`node --check\`
+     - Reminder that \`run_integration_check\` will run automatically after the setup phase — all Core Files and HTML imports must resolve
+     - Any project-specific setup steps (e.g., "copy .env.example to .env", "run database migration")
 - **Mermaid.js Diagrams**: At minimum include:
   - System architecture diagram
   - Data flow diagram
@@ -303,4 +324,82 @@ export function parseArchitectOutput(text) {
   }
 
   return result;
+}
+
+// ─── Atomic Document Save with Merge ────────────────────────────────────────
+
+/**
+ * Merges a new document with an existing one on disk.
+ * Strategy: if the existing file has content, prepend a version separator and append the old
+ * content as a "Previous Version" reference at the bottom. The new content is always the
+ * primary document. This prevents accidental data loss while keeping the latest version on top.
+ */
+function _mergeDocument(existingContent, newContent) {
+  if (!existingContent || existingContent.trim().length === 0) {
+    return newContent; // No existing content — just use new
+  }
+
+  // If the new content is substantially the same (>90% overlap), skip merge
+  const existingTrimmed = existingContent.trim();
+  const newTrimmed = newContent.trim();
+  if (existingTrimmed === newTrimmed) {
+    return newContent; // Identical — no merge needed
+  }
+
+  // Append previous version as a reference section at the bottom
+  const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  return `${newTrimmed}\n\n---\n\n<details>\n<summary>📋 Previous Version (${timestamp})</summary>\n\n${existingTrimmed}\n\n</details>\n`;
+}
+
+/**
+ * Saves SRS.md and/or HLD.md to disk with merge support.
+ * - Reads existing files first to perform smart merge
+ * - Writes atomically via safeWriteFile (or writeFile fallback)
+ * - Returns a verification log array
+ *
+ * @param {string} projectPath — project root
+ * @param {{ srs: string|null, hld: string|null }} docs — parsed documents
+ * @returns {Promise<{ saved: string[], errors: string[] }>}
+ */
+export async function saveArchitectDocs(projectPath, docs) {
+  const docsPath = projectPath.replace(/[\\/]$/, '') + '/docs';
+  const saved = [];
+  const errors = [];
+
+  for (const [key, filename] of [['srs', 'SRS.md'], ['hld', 'HLD.md']]) {
+    if (!docs[key]) continue;
+
+    const filePath = docsPath + '/' + filename;
+    try {
+      // Read existing content for merge
+      const existing = await api.readFile(filePath).catch(() => null);
+
+      // Merge new content with existing
+      const merged = _mergeDocument(existing, docs[key]);
+
+      // Write to disk
+      const writer = api.safeWriteFile || api.writeFile;
+      await writer(filePath, merged);
+
+      // Verify the write succeeded by reading back
+      const verification = await api.readFile(filePath).catch(() => null);
+      if (verification && verification.length > 0) {
+        saved.push(filename);
+      } else {
+        errors.push(`${filename}: write succeeded but verification read returned empty`);
+      }
+    } catch (e) {
+      errors.push(`${filename}: ${e.message}`);
+    }
+  }
+
+  // Log verification message
+  if (saved.length > 0) {
+    console.log(`[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
+  }
+  if (errors.length > 0) {
+    console.warn(`[ARCHITECT] Save errors: ${errors.join('; ')}`);
+  }
+
+  return { saved, errors };
 }

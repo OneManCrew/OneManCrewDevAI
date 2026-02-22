@@ -3,7 +3,7 @@ import { createLLMProvider, getAgentSettings } from '../services/llmProviders';
 import {
   PHASES, PHASE_LABELS,
   detectPhaseTransition, isApproval,
-  buildConversationMessages, parseArchitectOutput,
+  buildConversationMessages, parseArchitectOutput, saveArchitectDocs,
 } from '../services/architectAgent';
 import api from '../services/electronBridge';
 import ReactMarkdown from 'react-markdown';
@@ -222,30 +222,36 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             }
           }
 
-          // Generation: extract and save docs
+          // Generation: extract and save docs (atomic save with merge)
           if (currentPhase === PHASES.GENERATION) {
             const docs = parseArchitectOutput(fullResponse);
             if (docs.srs || docs.hld) {
-              const docsPath = projectPath.replace(/[\\/]$/, '') + '/docs';
-              if (docs.srs) await api.writeFile(docsPath + '/SRS.md', docs.srs);
-              if (docs.hld) await api.writeFile(docsPath + '/HLD.md', docs.hld);
+              const { saved, errors } = await saveArchitectDocs(projectPath, docs);
               setPhase(PHASES.DONE);
               setDocsReady(true);
               setView(VIEW.SPLIT);
-              addMessage('system', `Documents saved to ${docsPath}/`);
+              if (saved.length > 0) {
+                addMessage('system', `[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
+              }
+              if (errors.length > 0) {
+                addMessage('system', `⚠️ Save errors: ${errors.join('; ')}`);
+              }
               notifyAgentComplete('Architect');
             }
           }
 
-          // Post-generation edits: if DONE and agent responds with doc fences, update files
+          // Post-generation edits: if DONE and agent responds with doc fences, merge-update files
           if (currentPhase === PHASES.DONE) {
             const docs = parseArchitectOutput(fullResponse);
             if (docs.srs || docs.hld) {
-              const docsPath = projectPath.replace(/[\\/]$/, '') + '/docs';
-              if (docs.srs) await api.writeFile(docsPath + '/SRS.md', docs.srs);
-              if (docs.hld) await api.writeFile(docsPath + '/HLD.md', docs.hld);
+              const { saved, errors } = await saveArchitectDocs(projectPath, docs);
               setDocsReady(true); // trigger re-render
-              addMessage('system', 'Documents updated.');
+              if (saved.length > 0) {
+                addMessage('system', `[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
+              }
+              if (errors.length > 0) {
+                addMessage('system', `⚠️ Save errors: ${errors.join('; ')}`);
+              }
             }
           }
         },
