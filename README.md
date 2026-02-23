@@ -26,7 +26,7 @@ OneManCrew Dev AI replaces an entire development team with a pipeline of special
 | Stage | Agent | What It Does |
 |-------|-------|-------------|
 | 1 | **🏗️ Architect** | Dominant & decisive — auto-decides tech stack, generates SRS & HLD (with Infrastructure Requirements) |
-| 2 | **🎨 UI Designer** | Creates React + Tailwind components with a full Design System (Lucide icons, Framer Motion animations, design tokens) |
+| 2 | **🎨 UI Designer** | Creates standalone HTML + CSS + JS files with a full Design System (design tokens, animations, no external dependencies) |
 | 3 | **📋 Dev Lead** | Breaks the project into phases, tasks, and assigns specialist agents |
 | 4 | **💻 Coding Agents** | 6 specialist agents (Backend, Frontend, DevOps, QA, Integration, Setup) execute tasks in parallel |
 | 5 | **🐛 Bug Fixer** | Scans project tree, performs Root Cause Analysis, identifies bugs, and dispatches fixes to the right specialist |
@@ -40,7 +40,7 @@ Each agent has its own chat interface where you can interact, guide, and overrid
 ```mermaid
 flowchart TD
     A["💡 You describe your idea"] --> B["🏗️ Architect — SRS + HLD"]
-    B --> C["🎨 UI Designer — React + Tailwind Components"]
+    B --> C["🎨 UI Designer — Standalone HTML + CSS + JS"]
     C --> D["📋 Dev Lead — Work Plan + Tasks"]
     D --> E["💻 Coding Agents x6 — Parallel Execution + QualityGate"]
     E --> F["🐛 Bug Fixer — QA + Auto-Fixes"]
@@ -198,10 +198,10 @@ your-project/
     ├── theme/
     │   └── colors.json              # Design tokens (from UI Designer)
     ├── components/
-    │   └── generated_ui/            # React + Tailwind components
-    │       ├── AppShell.jsx
-    │       ├── Sidebar.jsx
-    │       └── ...                   # All UI components
+    │   └── generated_ui/            # Standalone HTML + CSS + JS
+    │       ├── index.html            # Main UI layout
+    │       ├── styles.css            # All styling (no Tailwind/CDN)
+    │       └── app.js                # Interactive behavior
     └── ...                           # Generated source code
 ```
 
@@ -248,7 +248,7 @@ Contributions are welcome! Here's how to get started:
 | **Syntax Validation** | Auto-runs `node -c` on every `.js`/`.jsx` file after write; injects errors back to LLM for auto-fix (max 2 retries) |
 | **QualityGate** | Shadow LLM reviewer verifies code against task requirements + SRS before marking done (max 2 rounds) |
 | **Shared Knowledge Base** | `docs/context_summary.json` — tracks all files, exports, technologies, entities (API routes, components, env vars), and LLM-generated task summaries; injected into every agent's prompt |
-| **Design System** | `src/theme/colors.json` design tokens created during UI Discovery; all components use Lucide React icons + Framer Motion animations |
+| **Design System** | `src/theme/colors.json` design tokens created during UI Discovery; UI Designer generates pure HTML+CSS+JS (no React, no Tailwind, no CDNs) — preview opens `index.html` directly |
 | **Stop-on-Failure** | Pauses execution when a critical task fails; asks user to continue or stop; marks downstream tasks as BLOCKED |
 | **Smart Preview** | Detects running Vite dev server (ports 5173/5174/3000/3001) via native IPC probe for live preview, or generates a styled HTML code viewer as fallback |
 | **Token Usage Tracker** | Centralized tracking of input/output tokens + estimated cost across all LLM providers; per-agent breakdown; persisted to `project_knowledge.json`; compact TitleBar badge |
