@@ -300,6 +300,49 @@ export function parseUIDesignerOutput(text) {
     }
   }
 
+  // ── Post-process: fix script.js / main.js references in HTML ──
+  // When the parser renames the JS block from "script.js" → "app.js", the HTML still
+  // references the old filename. Fix it so the saved files are self-consistent.
+  const appJsComp0 = result.components.find(c => c.filename === 'app.js');
+  const htmlComp0  = result.components.find(c => /\.html$/.test(c.filename));
+  if (appJsComp0 && htmlComp0) {
+    htmlComp0.content = htmlComp0.content
+      .replace(/src="script\.js"/gi, 'src="app.js"')
+      .replace(/src="main\.js"/gi,   'src="app.js"')
+      .replace(/src="index\.js"/gi,  'src="app.js"');
+    log.info('parseUIDesignerOutput', 'Post-process: updated script/main.js ref → app.js in HTML');
+  }
+
+  // ── Pass 3: Inline extraction — <style> and <script> inside the HTML file ──
+  // Handles the case where the LLM produces a single self-contained HTML file
+  // with all CSS in <style> tags and JS in <script> tags (no separate code blocks).
+  const htmlComp3 = result.components.find(c => /\.html$/.test(c.filename));
+  if (htmlComp3) {
+    const hasCssNow = result.components.some(c => /\.css$/.test(c.filename));
+    const hasJsNow  = result.components.some(c => /\.(js|jsx|ts|tsx)$/.test(c.filename));
+
+    if (!hasCssNow) {
+      const styleMatch = htmlComp3.content.match(/<style[^>]*>\s*([\s\S]*?)\s*<\/style>/i);
+      if (styleMatch && styleMatch[1].trim().length > 50) {
+        log.info('parseUIDesignerOutput', 'Inline extraction: styles.css from <style> tag', { chars: styleMatch[1].trim().length });
+        result.components.push({ filename: 'styles.css', content: styleMatch[1].trim() });
+      }
+    }
+
+    if (!hasJsNow) {
+      // Match only inline <script> blocks (no src= attribute)
+      const scriptMatches = [...htmlComp3.content.matchAll(/<script(?![^>]*\bsrc\b)[^>]*>([\s\S]*?)<\/script>/gi)];
+      for (const sm of scriptMatches) {
+        const jsContent = sm[1].trim();
+        if (jsContent.length > 50) {
+          log.info('parseUIDesignerOutput', 'Inline extraction: app.js from <script> tag', { chars: jsContent.length });
+          result.components.push({ filename: 'app.js', content: jsContent });
+          break;
+        }
+      }
+    }
+  }
+
   // Extract json:colors.json design token block (special case)
   const jsonPattern = new RegExp(fence + 'json:colors\\.json\\n([\\s\\S]*?)' + fence);
   const jsonMatch = text.match(jsonPattern);
