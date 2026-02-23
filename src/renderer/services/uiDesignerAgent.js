@@ -110,51 +110,48 @@ const DESIGN_PROMPT = BASE_PERSONA + '\n\n' +
   'Based on the conversation, the SRS/HLD documents, and the Design Tokens from discovery,\n' +
   'generate a **complete, production-quality, interactive HTML + CSS + JS mockup**.\n\n' +
   '**IMPORTANT: Pure HTML + CSS + vanilla JavaScript ONLY. No React, no JSX, no frameworks, no CDNs.**\n\n' +
-  '### Output Format — 3 files, each in its own fenced block:\n\n' +
-  F + 'html:index.html\n<!DOCTYPE html>\n<!-- COMPLETE HTML -->\n' + F + '\n\n' +
-  F + 'css:styles.css\n/* COMPLETE CSS */\n' + F + '\n\n' +
-  F + 'js:app.js\n// COMPLETE JS\n' + F + '\n\n' +
+
+  '### ⚠️ CRITICAL — Output Format (READ CAREFULLY):\n\n' +
+  'You MUST output EXACTLY 3 fenced code blocks using THIS format:\n\n' +
+  F + 'html:index.html\n<!DOCTYPE html><!-- ... --></html>\n' + F + '\n\n' +
+  F + 'css:styles.css\n/* all styles here */\n' + F + '\n\n' +
+  F + 'js:app.js\n// all JavaScript here\n' + F + '\n\n' +
+  '❌ WRONG — DO NOT use these formats:\n' +
+  '  ```html           (no filename tag)\n' +
+  '  ```javascript     (wrong language tag — use "js" not "javascript")\n' +
+  '  ```js             (no :filename)\n' +
+  '  // index.html     (comment-based filename)\n' +
+  '  /* styles.css */  (comment-based filename)\n' +
+  '→ The filename after the colon (e.g., "html:index.html") is REQUIRED for the file to be saved.\n\n' +
+
   '### Quality Requirements — NON-NEGOTIABLE:\n\n' +
-  '**1. ALL Screens Must Be Present:**\n' +
-  '   - Identify every screen from the SRS and implement ALL of them in the HTML.\n' +
+  '**1. ALL Screens from the SRS must exist in the HTML:**\n' +
   '   - Use `<section id="screen-name" class="screen">` for each screen.\n' +
-  '   - Default screen is visible; others are `display: none` initially.\n' +
-  '   - JS must handle navigation between ALL screens.\n\n' +
-  '**2. Real Navigation:**\n' +
-  '   - Add a sidebar, navbar, or tab bar appropriate to the app type.\n' +
-  '   - Clicking navigation items switches the visible screen (pure JS, no page reload).\n' +
-  '   - Active state is highlighted in the nav.\n\n' +
-  '**3. Visual Polish — Look Like a Finished App:**\n' +
-  '   - Use the design token colors via CSS custom properties.\n' +
-  '   - Use Inter or system-ui as the font family.\n' +
-  '   - Add hover states, focus states, and smooth transitions (0.15s ease).\n' +
-  '   - Use CSS Grid and Flexbox for layouts — NO tables for layout.\n' +
-  '   - Add box shadows, border radius, and appropriate spacing.\n' +
-  '   - Include a realistic app header with title/logo area.\n\n' +
-  '**4. Realistic Content:**\n' +
-  '   - Use contextually appropriate placeholder content — NOT "Lorem ipsum".\n' +
-  '   - Use domain-specific terms from the SRS (e.g., for a clock app: "12:34:56", "Set Alarm").\n' +
-  '   - Tables/lists should have 3-5 rows of realistic sample data.\n\n' +
-  '**5. Working Interactivity (vanilla JS):**\n' +
-  '   - Screen navigation (show/hide screens).\n' +
-  '   - Modal open/close (if the app has modals).\n' +
-  '   - Tab switching within screens.\n' +
-  '   - Form validation feedback (show error messages on invalid input).\n' +
-  '   - Button click feedback (active/loading state).\n\n' +
-  '**6. CSS Variables from Design Tokens:**\n' +
-  '   `:root { --primary: ...; --background: ...; --surface: ...; --text: ...; ... }`\n' +
-  '   Use ONLY var(--token-name) for colors — no hardcoded hex values in CSS.\n\n' +
-  '**7. SVG Icons:**\n' +
-  '   - Use inline SVG for icons. No icon font CDN.\n' +
-  '   - Common icons: hamburger menu (3 lines), close (×), settings (⚙), search (🔍 shape).\n\n' +
-  '**8. Responsive:**\n' +
-  '   - Add media queries at `@media (max-width: 768px)` minimum.\n' +
-  '   - Sidebar collapses to top nav on mobile.\n\n' +
+  '   - Default screen is visible (`display: block`); others are `display: none` initially.\n\n' +
+  '**2. Navigation that actually works:**\n' +
+  '   - Nav buttons use `data-page="screen-name"` attribute, NOT href.\n' +
+  '   - JS: `btn.dataset.page` to get the target. Show/hide `.screen` sections.\n' +
+  '   - ✅ CORRECT JS pattern:\n' +
+  '     `navBtn.addEventListener("click", () => { showScreen(navBtn.dataset.page); });`\n' +
+  '   - ❌ WRONG: `getAttribute("href")` on buttons that have no href.\n\n' +
+  '**3. CSS Custom Properties — NO hardcoded colors:**\n' +
+  '   ✅ CORRECT:  `background: var(--background);  color: var(--primary);`\n' +
+  '   ❌ WRONG:    `background: #1E293B;  color: #3B82F6;`\n' +
+  '   → Define ALL design token colors in `:root { }` at the top of styles.css.\n\n' +
+  '**4. Realistic, domain-specific placeholder content:**\n' +
+  '   - Use names, dates, amounts relevant to the project (no "Lorem ipsum").\n' +
+  '   - Tables/lists: 3-5 rows of realistic sample data.\n\n' +
+  '**5. Working Interactivity:**\n' +
+  '   - Tab switching, modal open/close, form validation with error messages.\n' +
+  '   - All event listeners in app.js using addEventListener (no onclick= in HTML).\n\n' +
+  '**6. Visual Polish:**\n' +
+  '   - Sidebar navigation with active state highlighting.\n' +
+  '   - Hover states, smooth transitions (0.15s ease), box-shadows, border-radius.\n' +
+  '   - Responsive: sidebar collapses on mobile (@media max-width: 768px).\n\n' +
   '### File Rules:\n' +
-  '- index.html links to styles.css and app.js (relative paths, no CDN).\n' +
-  '- styles.css defines ALL styles — no style attributes in HTML except debugging.\n' +
-  '- app.js uses `addEventListener` — no onclick= in HTML.\n' +
-  '- Output COMPLETE files, not snippets.';
+  '- index.html must include: `<link rel="stylesheet" href="styles.css">` and `<script src="app.js"></script>`\n' +
+  '- Filename in JS/HTML must be `app.js` (NOT `script.js`, NOT `main.js`).\n' +
+  '- Output COMPLETE files — never truncate or use "// rest of code here".';
 
 const REVIEW_PROMPT = BASE_PERSONA + '\n\n' +
   '## Your Current Task: UI REVIEW & MODIFICATIONS\n\n' +
@@ -207,58 +204,99 @@ export function detectUIPhaseTransition(responseText, currentPhase) {
 /**
  * Extracts UI files from agent output.
  *
- * Looks for fenced code blocks tagged html:, css:, js:, jsx:, tsx: with filenames.
+ * Pass 1 — Strict named format (preferred):
+ *   ```html:index.html  ```css:styles.css  ```js:app.js
+ *   Also handles ```javascript:app.js and case-insensitive language tags.
+ *
+ * Pass 2 — Fallback for unnamed blocks (common model mistake):
+ *   ```html   → index.html
+ *   ```css    → styles.css
+ *   ```javascript / ```js → app.js
+ *   Only used if Pass 1 didn't find the file.
+ *
  * Also extracts json:colors.json for design tokens.
- *
- * For each named file block (e.g., ```html:index.html), finds the LAST ``` on its
- * own line within the block's search space — same strategy as _extractFencedBlock
- * in architectAgent.js — to correctly handle any internal code comments with ```.
- *
  * Returns { components: [{ filename, content }], designTokens }
  */
 export function parseUIDesignerOutput(text) {
   const result = { components: [], designTokens: null };
 
-  // Extract html/css/js/jsx/tsx file blocks using tag:filename format
-  // Strategy: find each opening fence, then find the LAST ``` before the next opening fence
   const BT = String.fromCharCode(96); // backtick
   const fence = BT + BT + BT;
 
-  // Find all opening fences with filename tags
-  const openingPattern = new RegExp(fence + '(?:html|css|js|jsx|tsx):([^\\n' + BT + ']+)\\n', 'g');
-  let openMatch;
-  const openings = []; // { index, filenameEnd, filename }
-
-  while ((openMatch = openingPattern.exec(text)) !== null) {
-    const filename = openMatch[1].trim();
-    if (filename) {
-      openings.push({
-        index: openMatch.index,
-        contentStart: openMatch.index + openMatch[0].length,
-        filename,
-      });
-    }
-  }
-
-  for (let o = 0; o < openings.length; o++) {
-    const { contentStart, filename } = openings[o];
-    // Search space ends at start of next opening fence (if any), or end of text
-    const searchEnd = o + 1 < openings.length ? openings[o + 1].index : text.length;
+  /**
+   * Extract content of a fenced block starting at contentStart.
+   * searchEnd limits the search space (start of next block or end of text).
+   */
+  function extractBlockContent(contentStart, searchEnd) {
     const searchSpace = text.slice(contentStart, searchEnd);
-
-    // Find the LAST ``` on its own line in the search space — that is the closing fence
     const lines = searchSpace.split('\n');
     let closingIdx = -1;
     for (let i = lines.length - 1; i >= 0; i--) {
       if (lines[i].trim() === fence) { closingIdx = i; break; }
     }
-
-    const content = closingIdx === -1
+    return closingIdx === -1
       ? searchSpace.trim()
       : lines.slice(0, closingIdx).join('\n').trim();
+  }
 
-    if (content) {
-      result.components.push({ filename, content });
+  // ── Pass 1: Named format  ```(html|css|js|jsx|tsx|javascript|typescript):filename ──
+  // Language aliases map to canonical extensions
+  const langToExt = { html: 'html', css: 'css', js: 'js', jsx: 'jsx', tsx: 'tsx', javascript: 'js', typescript: 'ts' };
+  const namedPattern = new RegExp(fence + '(' + Object.keys(langToExt).join('|') + '):([^\\n' + BT + ']+)\\n', 'gi');
+  let openMatch;
+  const namedOpenings = [];
+
+  while ((openMatch = namedPattern.exec(text)) !== null) {
+    const lang = openMatch[1].toLowerCase();
+    let filename = openMatch[2].trim();
+    // If model wrote ```js:script.js but we need app.js — normalize common JS filenames
+    if (langToExt[lang] === 'js' && /^(script|main|index)\.js$/.test(filename)) {
+      filename = 'app.js';
+    }
+    namedOpenings.push({
+      index: openMatch.index,
+      contentStart: openMatch.index + openMatch[0].length,
+      filename,
+      lang,
+    });
+  }
+
+  for (let o = 0; o < namedOpenings.length; o++) {
+    const { contentStart, filename } = namedOpenings[o];
+    const searchEnd = o + 1 < namedOpenings.length ? namedOpenings[o + 1].index : text.length;
+    const content = extractBlockContent(contentStart, searchEnd);
+    if (content) result.components.push({ filename, content });
+  }
+
+  // ── Pass 2: Unnamed fallback  ```html / ```css / ```javascript ──
+  // Only runs if Pass 1 didn't find all 3 main files.
+  const hasHtml = result.components.some(c => /\.html$/.test(c.filename));
+  const hasCss  = result.components.some(c => /\.css$/.test(c.filename));
+  const hasJs   = result.components.some(c => /\.(js|jsx|ts|tsx)$/.test(c.filename));
+
+  if (!hasHtml || !hasCss || !hasJs) {
+    const fallbackMap = [
+      { tag: 'html', filename: 'index.html', needed: !hasHtml },
+      { tag: 'css', filename: 'styles.css', needed: !hasCss },
+      { tag: '(?:javascript|js)', filename: 'app.js', needed: !hasJs },
+    ];
+
+    for (const { tag, filename, needed } of fallbackMap) {
+      if (!needed) continue;
+      const pat = new RegExp(fence + tag + '\\s*\\n', 'i');
+      const m = pat.exec(text);
+      if (!m) continue;
+      const contentStart = m.index + m[0].length;
+      // Find the next fence opening after our start to limit the search space
+      const allFenceStarts = [...text.matchAll(new RegExp(fence + '\\S', 'g'))]
+        .map(x => x.index)
+        .filter(i => i > m.index);
+      const searchEnd = allFenceStarts.length > 0 ? allFenceStarts[0] : text.length;
+      const content = extractBlockContent(contentStart, searchEnd);
+      if (content && content.length > 50) {
+        log.info('parseUIDesignerOutput', `Fallback extraction: ${filename} (unnamed block)`, { chars: content.length });
+        result.components.push({ filename, content });
+      }
     }
   }
 
