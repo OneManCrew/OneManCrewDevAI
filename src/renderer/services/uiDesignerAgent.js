@@ -43,29 +43,25 @@ const BASE_PERSONA =
 
 const DISCOVERY_PROMPT = BASE_PERSONA + '\n\n' +
   '## Your Current Task: UI DISCOVERY\n\n' +
-  'You have been given the SRS.md and HLD.md documents. Your job: identify screens, state design decisions, ask at most 2 short questions, then immediately produce the design tokens and complete.\n\n' +
+  'You have been given the SRS.md and HLD.md documents.\n' +
+  'Your ONLY job in this phase: identify screens, state your design choices, ask at most 1-2 questions,\n' +
+  'then OUTPUT the colors.json block and [UI_DISCOVERY_COMPLETE] — ALL IN YOUR VERY FIRST RESPONSE.\n\n' +
 
-  '### STEP 1 — Your FIRST response must contain ALL of this:\n' +
-  '1. **Screens identified** — list every navigable VIEW from the SRS by name (e.g., "Clock", "Alarms", "Settings").\n' +
-  '   ⚠️ SCREENS = views the user switches between. NOT CSS effects, NOT animation objects, NOT wrapper components.\n' +
-  '2. **Your design decisions** — state them as facts, not questions:\n' +
-  '   - Color scheme: "I\'ll use a dark theme with #1E293B background and #3B82F6 primary"\n' +
-  '   - Typography: "Inter font, 64px for time display, 16px for labels"\n' +
-  '   - Layout: "centered card layout with fixed sidebar navigation"\n' +
-  '3. **EXACTLY 1-2 short questions** about visual preferences (see format below).\n\n' +
+  '### YOUR FIRST RESPONSE MUST FOLLOW THIS EXACT STRUCTURE (in order):\n\n' +
+  '**Part 1 — Screens:**\n' +
+  'List every navigable VIEW from the SRS (e.g., "Clock", "Alarms", "Settings").\n' +
+  '⚠️ SCREENS = views the user switches between, NOT components or CSS states.\n\n' +
 
-  '### QUESTION FORMAT — READ THIS CAREFULLY:\n' +
-  '✅ CORRECT — one plain sentence per question:\n' +
-  '   "Do you prefer dark mode or light mode?"\n' +
-  '   "Any brand colors or reference apps you like the look of?"\n\n' +
-  '❌ WRONG — categories with sub-bullets:\n' +
-  '   "1. Visual Style\\n   - What color scheme?\\n   - What aesthetic?"\n' +
-  '   "2. Layout\\n   - Single line or separate?\\n   - Where should toggle go?"\n\n' +
-  '→ Ask questions as flat sentences. No headers. No bullet sub-lists. Maximum 2 sentences total.\n\n' +
+  '**Part 2 — Your Design Decisions (state as facts, not questions):**\n' +
+  '- "I\'ll use a dark theme: #1E293B background, #3B82F6 primary"\n' +
+  '- "Inter font, sidebar navigation, card-based layout"\n\n' +
 
-  '### STEP 2 — After the user\'s FIRST reply, IMMEDIATELY complete discovery:\n' +
-  'Do NOT ask follow-up questions. Incorporate their input into the colors, then output:\n\n' +
-  '**a. The design token file (MANDATORY):**\n\n' +
+  '**Part 3 — At most 2 short preference questions (OPTIONAL — plain sentences only):**\n' +
+  '✅ CORRECT: "Do you prefer dark or light mode?"\n' +
+  '✅ CORRECT: "Any brand colors you want me to use?"\n' +
+  '❌ WRONG: numbered lists with sub-bullets, section headers like "Visual Preferences:"\n\n' +
+
+  '**Part 4 — THE colors.json BLOCK (MANDATORY — include in EVERY response):**\n\n' +
   F + 'json:colors.json\n' +
   '{\n' +
   '  "primary": "#3B82F6",\n' +
@@ -83,23 +79,26 @@ const DISCOVERY_PROMPT = BASE_PERSONA + '\n\n' +
   '  "error": "#EF4444",\n' +
   '  "info": "#3B82F6"\n' +
   '}\n' + F + '\n\n' +
-  'Customize every color to match the user\'s preference (dark/light, brand color, style).\n\n' +
-  '**b. End the response with exactly: [UI_DISCOVERY_COMPLETE]**\n\n' +
+  'Replace the hex values above with YOUR chosen palette for this specific project.\n\n' +
+
+  '**Part 5 — End with exactly this token (MANDATORY):**\n' +
+  '[UI_DISCOVERY_COMPLETE]\n\n' +
+
+  '### IF THE USER REPLIES:\n' +
+  'Incorporate their preference, output an UPDATED colors.json block, then [UI_DISCOVERY_COMPLETE] again.\n' +
+  'Do NOT ask follow-up questions. One round of user input is the maximum.\n\n' +
 
   '### IMMEDIATE COMPLETION TRIGGERS:\n' +
-  'If the user says ANY of these (in any language), output colors.json + [UI_DISCOVERY_COMPLETE] RIGHT NOW:\n' +
-  '- "decide yourself" / "you decide" / "go ahead" / "up to you"\n' +
-  '- "whatever you think" / "whatever looks good" / "just do it"\n' +
-  '- "תעצב מה שנראה לך" / "תחליט בעצמך" / "תתחיל" / "אני מסכים"\n' +
-  '- Any response indicating they have no preference or trust your judgment\n' +
-  '→ These mean FULL APPROVAL. Do NOT ask more questions. Complete immediately.\n\n' +
+  'If the user says "go ahead", "you decide", "whatever looks good", "תתחיל", "תחליט", "יאללה", "סבבה" or anything\n' +
+  'indicating trust → output colors.json + [UI_DISCOVERY_COMPLETE] RIGHT NOW without any questions.\n\n' +
 
   '### ABSOLUTE RULES:\n' +
-  '❌ NEVER output any JSON except the `colors.json` block above\n' +
-  '❌ NEVER output design specs, component objects, animation configs, or style guides as JSON\n' +
-  '❌ NEVER ask about: CSS framework, icon library, font family, responsiveness, blur levels, border-radius, shadow intensity\n' +
+  '❌ NEVER skip the colors.json block — it is REQUIRED even in the first response\n' +
+  '❌ NEVER skip [UI_DISCOVERY_COMPLETE] — it is REQUIRED to advance to design generation\n' +
+  '❌ NEVER output any other JSON (no component specs, no animation configs)\n' +
+  '❌ NEVER ask about CSS frameworks, icon libraries, border-radius, blur, or responsiveness\n' +
   '❌ NEVER ask more than 1 round of questions\n' +
-  '✅ The colors.json block and [UI_DISCOVERY_COMPLETE] are MANDATORY — discovery is not complete without them';
+  '✅ The colors.json block and [UI_DISCOVERY_COMPLETE] MUST appear in your FIRST response';
 
 const DESIGN_PROMPT = BASE_PERSONA + '\n\n' +
   '## Your Current Task: GENERATE THE COMPLETE UI MOCKUP\n\n' +
@@ -269,10 +268,40 @@ export function parseUIDesignerOutput(text) {
     }
   }
 
+  // ── Fallback: extract colors from prose if model forgot the json:colors.json block ──
+  // Matches lines like: "Primary: #3B82F6" or "primary: #3B82F6" or "- primary (#3B82F6)"
+  // Builds a minimal design token object so design generation can still proceed.
+  if (!result.designTokens) {
+    const colorLines = text.match(/#([0-9A-Fa-f]{6})\b/g);
+    if (colorLines && colorLines.length >= 3) {
+      // Try to extract labelled hex values
+      const labelledPattern = /\b(primary|secondary|accent|background|surface|text|border|success|warning|error|info)\b[^\n#]*#([0-9A-Fa-f]{6})/gi;
+      const found = {};
+      let m;
+      while ((m = labelledPattern.exec(text)) !== null) {
+        const key = m[1].toLowerCase();
+        if (!found[key]) found[key] = '#' + m[2];
+      }
+      if (Object.keys(found).length >= 2) {
+        // Fill in defaults for any missing keys
+        const defaults = {
+          primary: '#3B82F6', primaryHover: '#2563EB', secondary: '#6366F1',
+          accent: '#F59E0B', background: '#0F172A', surface: '#1E293B',
+          surfaceHover: '#334155', text: '#F8FAFC', textMuted: '#94A3B8',
+          border: '#334155', success: '#22C55E', warning: '#F59E0B',
+          error: '#EF4444', info: '#3B82F6',
+        };
+        result.designTokens = { ...defaults, ...found };
+        log.info('parseUIDesignerOutput', 'Built design tokens from prose (fallback)', { keys: Object.keys(found) });
+      }
+    }
+  }
+
   log.info('parseUIDesignerOutput', 'Parsed output', {
     componentCount: result.components.length,
     filenames: result.components.map(c => c.filename),
     hasDesignTokens: !!result.designTokens,
+    tokenSource: result.designTokens ? 'found' : 'none',
   });
 
   return result;

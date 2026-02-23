@@ -431,26 +431,28 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
             }
           }
 
-          // ── Auto-nudge: if discovery stalls after 1 user reply, force completion ──
-          // This handles cases where the model ignores [UI_DISCOVERY_COMPLETE] instructions
-          // or outputs the wrong JSON format.
+          // ── Auto-nudge: if discovery stalls (no [UI_DISCOVERY_COMPLETE] emitted) ──
+          // Fires after ANY DISCOVERY response — regardless of user message count.
+          // (The initial trigger is sent with showUserMsg:false so it never adds to
+          //  messagesRef, meaning the old userMsgCount >= 1 check never fired.)
+          // Delay is 5 seconds so the user can read and optionally reply first.
+          // The check inside the timeout guards against double-nudge if user already replied.
           if (currentPhase === UI_PHASES.DISCOVERY && !nextPhase) {
-            const userMsgCount = messagesRef.current.filter(m => m.role === 'user').length;
-            if (userMsgCount >= 1) {
-              // Give the model 800ms (so any pending state updates settle),
-              // then check: still in DISCOVERY and not streaming → send a hard nudge.
-              setTimeout(() => {
-                if (!abortControllerRef.current && phaseRef.current === UI_PHASES.DISCOVERY) {
-                  log.info('UIDesignerChat', 'Auto-nudging discovery completion', { userMsgCount });
-                  addMessage('system', '⏩ Completing discovery...');
-                  _sendToLLMInternal(
-                    'Complete discovery now. Do NOT ask any more questions. Output the colors.json block immediately and end with [UI_DISCOVERY_COMPLETE].',
-                    UI_PHASES.DISCOVERY,
-                    { showUserMsg: false }
-                  );
-                }
-              }, 800);
-            }
+            const discoveryMsgCount = messagesRef.current.filter(m => m.role === 'assistant' && m.content).length;
+            // Nudge after ANY assistant response in DISCOVERY (even the first one)
+            setTimeout(() => {
+              // Only fire if we're still in DISCOVERY and no stream is running
+              if (!abortControllerRef.current && phaseRef.current === UI_PHASES.DISCOVERY) {
+                log.info('UIDesignerChat', 'Auto-nudging discovery completion', { discoveryMsgCount });
+                addMessage('system', '⏩ Completing discovery...');
+                _sendToLLMInternal(
+                  'IMPORTANT: You forgot to include the colors.json block and [UI_DISCOVERY_COMPLETE] in your previous response. ' +
+                  'Output ONLY the colors.json fenced block now, then [UI_DISCOVERY_COMPLETE]. No other text.',
+                  UI_PHASES.DISCOVERY,
+                  { showUserMsg: false }
+                );
+              }
+            }, 5000);
           }
 
           // Extract and save design tokens (typically during DISCOVERY)
