@@ -11,15 +11,16 @@ import remarkGfm from 'remark-gfm';
 import GenerationProgress from './GenerationProgress';
 import MultiQuestionReply, { parseQuestions, stripQuestionsBlock } from './QuickReply';
 import ModelSelector from './ModelSelector';
-import { notifyAgentComplete, notifyAgentError, notifyUserAttentionNeeded } from '../services/notificationService';
+import { notifyAgentComplete, notifyAgentError } from '../services/notificationService';
+import log from '../services/logger';
 
 // ─── Phase colors ──────────────────────────────────────────────────────────────
 const PHASE_COLORS = {
-  [UI_PHASES.LOADING]: { bg: 'bg-gray-500/15', text: 'text-gray-400', dot: 'bg-gray-400' },
-  [UI_PHASES.DISCOVERY]: { bg: 'bg-cyan-500/15', text: 'text-cyan-400', dot: 'bg-cyan-400' },
-  [UI_PHASES.DESIGN]: { bg: 'bg-pink-500/15', text: 'text-pink-400', dot: 'bg-pink-400' },
-  [UI_PHASES.REVIEW]: { bg: 'bg-amber-500/15', text: 'text-amber-400', dot: 'bg-amber-400' },
-  [UI_PHASES.DONE]: { bg: 'bg-green-500/15', text: 'text-green-400', dot: 'bg-green-400' },
+  [UI_PHASES.LOADING]:   { bg: 'bg-gray-500/15',  text: 'text-gray-400',  dot: 'bg-gray-400' },
+  [UI_PHASES.DISCOVERY]: { bg: 'bg-cyan-500/15',  text: 'text-cyan-400',  dot: 'bg-cyan-400' },
+  [UI_PHASES.DESIGN]:    { bg: 'bg-pink-500/15',  text: 'text-pink-400',  dot: 'bg-pink-400' },
+  [UI_PHASES.REVIEW]:    { bg: 'bg-amber-500/15', text: 'text-amber-400', dot: 'bg-amber-400' },
+  [UI_PHASES.DONE]:      { bg: 'bg-green-500/15', text: 'text-green-400', dot: 'bg-green-400' },
 };
 
 const PHASE_ORDER = [UI_PHASES.DISCOVERY, UI_PHASES.DESIGN, UI_PHASES.REVIEW, UI_PHASES.DONE];
@@ -31,28 +32,39 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   const [error, setError] = useState(null);
   const [phase, setPhase] = useState(UI_PHASES.LOADING);
   const [tokenCount, setTokenCount] = useState(0);
+  const [estimatedDesignTokens, setEstimatedDesignTokens] = useState(12000);
   const [contextDocs, setContextDocs] = useState(null);
   const [hasUI, setHasUI] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const agentSettings = React.useMemo(() => getAgentSettings(settings, 'ui_designer'), [settings]);
+
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
   const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  const phaseRef = useRef(phase);
+  const abortControllerRef = useRef(null);
+  // Tracks the latest contextDocs synchronously so sendToLLM's closure always reads current value
+  const contextDocsRef = useRef(contextDocs);
 
-  const docsPath = projectPath ? projectPath.replace(/[\\/]$/, '') + '/docs' : null;
-  const uiPath = projectPath ? projectPath.replace(/[\\/]$/, '') + '/src/components/generated_ui' : null;
-  const themePath = projectPath ? projectPath.replace(/[\\/]$/, '') + '/src/theme' : null;
+  messagesRef.current = messages;
+  phaseRef.current = phase;
+  contextDocsRef.current = contextDocs;
+
+  // ─── Path construction ───────────────────────────────────────────────────────
+  const docsPath  = projectPath ? projectPath.replace(/[\\/]+$/, '') + '/docs' : null;
+  const uiPath    = projectPath ? projectPath.replace(/[\\/]+$/, '') + '/src/components/generated_ui' : null;
+  const themePath = projectPath ? projectPath.replace(/[\\/]+$/, '') + '/src/theme' : null;
   const colorsPath = themePath ? themePath + '/colors.json' : null;
 
-  // ─── Reset all state when projectPath changes (workspace switch) ──────
+  // ─── Reset all state when projectPath changes ────────────────────────────────
   const prevPathRef = useRef(projectPath);
   const pathStableRef = useRef(true);
   useEffect(() => {
     if (prevPathRef.current && prevPathRef.current !== projectPath) {
+      log.info('UIDesignerChat', 'Project path changed — resetting state');
       pathStableRef.current = false;
       setMessages([]);
       setInput('');
@@ -75,9 +87,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       if (chatContainerRef.current) {
         chatContainerRef.current.querySelectorAll('*').forEach((el) => {
-          if (el.scrollHeight > el.clientHeight + 4) {
-            el.scrollTop = el.scrollHeight;
-          }
+          if (el.scrollHeight > el.clientHeight + 4) el.scrollTop = el.scrollHeight;
         });
       }
     }
@@ -95,7 +105,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
 
   const chatHistoryPath = docsPath ? docsPath + '/ui/designer-chat.json' : null;
 
-  // ─── Restore chat history on mount ──────────────────────────────────────
+  // ─── Restore chat history on mount ──────────────────────────────────────────
   useEffect(() => {
     if (!chatHistoryPath || historyLoaded) return;
     (async () => {
@@ -104,6 +114,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         if (raw) {
           const saved = JSON.parse(raw);
           if (saved.messages && saved.messages.length > 0) {
+            log.info('UIDesignerChat', 'History restored', { messageCount: saved.messages.length, phase: saved.phase });
             setMessages(saved.messages);
             if (saved.phase) setPhase(saved.phase);
             if (saved.hasUI) setHasUI(true);
@@ -111,60 +122,85 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
             if (docsPath) {
               try {
                 const [srs, hld] = await Promise.all([
-                  api.readFile(docsPath + '/SRS.md'),
-                  api.readFile(docsPath + '/HLD.md'),
+                  api.readFile(docsPath + '/SRS.md').catch(() => null),
+                  api.readFile(docsPath + '/HLD.md').catch(() => null),
                 ]);
-                setContextDocs({ srs, hld });
+                if (srs || hld) setContextDocs({ srs, hld });
               } catch (e) { /* docs may not exist yet */ }
             }
             setHistoryLoaded(true);
-            // Note: no preview window for React components
             return;
           }
         }
       } catch (e) {
-        console.warn('Failed to restore designer chat history:', e);
+        log.warn('UIDesignerChat', 'Failed to restore chat history', { error: e.message });
       }
       setHistoryLoaded(true);
     })();
   }, [chatHistoryPath, historyLoaded]);
 
-  // ─── Persist chat history on every change ───────────────────────────────
+  // ─── Persist chat history on every change ───────────────────────────────────
   useEffect(() => {
     if (!chatHistoryPath || !historyLoaded || messages.length === 0) return;
     if (!pathStableRef.current) return;
     const timer = setTimeout(async () => {
       if (!pathStableRef.current) return;
       try {
-        const data = JSON.stringify({ messages, phase, hasUI, contextDocs: contextDocs ? { srs: !!contextDocs.srs, hld: !!contextDocs.hld } : null }, null, 2);
+        const data = JSON.stringify({ messages, phase, hasUI }, null, 2);
         await api.writeFile(chatHistoryPath, data);
       } catch (e) {
-        console.warn('Failed to persist designer chat history:', e);
+        log.warn('UIDesignerChat', 'Failed to persist chat history', { error: e.message });
       }
     }, 500);
     return () => clearTimeout(timer);
   }, [messages, phase, hasUI, chatHistoryPath, historyLoaded]);
 
-  // ─── Load context docs (SRS + HLD) and check for existing UI ─────────────
+  // ─── Load context docs (SRS + HLD) and check for existing UI ──────────────
   useEffect(() => {
     if (!docsPath || historyLoaded === false) return;
     // Skip if we already restored from chat history
     if (messages.length > 0) return;
+    log.info('UIDesignerChat', 'Loading context docs', { docsPath });
     (async () => {
       try {
-        const [srsExists, hldExists] = await Promise.all([
+        let [srsExists, hldExists] = await Promise.all([
           api.exists(docsPath + '/SRS.md'),
           api.exists(docsPath + '/HLD.md'),
         ]);
 
+        let effectiveDocsPath = docsPath;
+
+        // ── Fallback: if projectPath ends with /src (common user error), try parent ──
         if (!srsExists && !hldExists) {
+          const normalised = (projectPath || '').replace(/[\\/]+$/, '');
+          if (/[\\/]src$/i.test(normalised)) {
+            const parentPath = normalised.replace(/[\\/]src$/i, '');
+            const fallbackPath = parentPath + '/docs';
+            log.info('UIDesignerChat', 'Trying parent-directory fallback', { fallbackPath });
+            const [fSrs, fHld] = await Promise.all([
+              api.exists(fallbackPath + '/SRS.md'),
+              api.exists(fallbackPath + '/HLD.md'),
+            ]);
+            if (fSrs || fHld) {
+              effectiveDocsPath = fallbackPath;
+              srsExists = fSrs;
+              hldExists = fHld;
+              log.info('UIDesignerChat', 'Docs found at parent path', { fallbackPath });
+              addMessage('system', `⚠️ Docs found at ${fallbackPath} — workspace was set to a subdirectory. Consider re-selecting the project root.`);
+            }
+          }
+        }
+
+        if (!srsExists && !hldExists) {
+          log.warn('UIDesignerChat', 'No docs found', { docsPath });
           setError(`No SRS.md or HLD.md found in ${docsPath}. Complete the Architect phase first.`);
+          setPhase(UI_PHASES.LOADING); // stay in loading so user can retry
           return;
         }
 
         const [srs, hld] = await Promise.all([
-          srsExists ? api.readFile(docsPath + '/SRS.md') : Promise.resolve(null),
-          hldExists ? api.readFile(docsPath + '/HLD.md') : Promise.resolve(null),
+          srsExists ? api.readFile(effectiveDocsPath + '/SRS.md') : Promise.resolve(null),
+          hldExists ? api.readFile(effectiveDocsPath + '/HLD.md') : Promise.resolve(null),
         ]);
 
         // Load existing design tokens if available
@@ -176,7 +212,10 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
           } catch (e) { /* no tokens yet */ }
         }
 
-        setContextDocs({ srs: srs || null, hld: hld || null, designTokens });
+        const ctx = { srs: srs || null, hld: hld || null, designTokens };
+        setContextDocs(ctx);
+        contextDocsRef.current = ctx;
+        log.info('UIDesignerChat', 'Context docs loaded', { srsLen: srs?.length, hldLen: hld?.length, hasTokens: !!designTokens });
 
         // Check for existing generated UI components (resume support)
         const uiDirExists = uiPath ? await api.exists(uiPath) : false;
@@ -184,25 +223,26 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         if (uiDirExists) {
           try {
             const entries = await api.readDir(uiPath);
-            existingComponents = (entries || []).filter(e => !e.isDirectory && /\.(jsx|tsx|html|css|js)$/.test(e.name));
+            existingComponents = (entries || []).filter(e => !e.isDirectory && /\.(html|css|js|jsx|tsx)$/.test(e.name));
           } catch (e) { /* ignore */ }
         }
 
         if (existingComponents.length > 0) {
           setHasUI(true);
           setPhase(UI_PHASES.REVIEW);
-          addMessage('system', `Existing UI components found (${existingComponents.length} files in src/components/generated_ui/). You can review them, request changes, or approve.`);
+          addMessage('system', `Existing UI components found (${existingComponents.length} files in src/components/generated_ui/). You can review, request changes, or approve.`);
         } else {
           setPhase(UI_PHASES.DISCOVERY);
-          addMessage('system', 'SRS and HLD loaded. Starting UI design discussion.');
+          addMessage('system', `SRS and HLD loaded (${(srs || '').length + (hld || '').length} chars total). Starting UI design discussion.`);
         }
       } catch (err) {
+        log.error('UIDesignerChat', 'Failed to load context docs', err);
         setError('Failed to load context documents: ' + err.message);
       }
     })();
   }, [docsPath, historyLoaded]);
 
-  // ─── Message helpers ─────────────────────────────────────────────────────
+  // ─── Message helpers ─────────────────────────────────────────────────────────
   const addMessage = useCallback((role, content, meta = {}) => {
     setMessages((prev) => [...prev, {
       id: Date.now() + Math.random(), role, content, timestamp: new Date(), ...meta,
@@ -222,59 +262,62 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     });
   }, []);
 
-  // ─── Save design tokens ───────────────────────────────────────
+  // ─── Save design tokens ──────────────────────────────────────────────────────
   const saveDesignTokens = useCallback(async (tokens) => {
     if (!colorsPath || !tokens) return;
     try {
       await api.safeWriteFile(colorsPath, JSON.stringify(tokens, null, 2));
-      setContextDocs(prev => ({ ...prev, designTokens: tokens }));
+      setContextDocs(prev => {
+        const updated = { ...prev, designTokens: tokens };
+        contextDocsRef.current = updated;
+        return updated;
+      });
       addMessage('system', 'Design tokens saved to src/theme/colors.json.');
+      log.info('UIDesignerChat', 'Design tokens saved', { path: colorsPath });
     } catch (err) {
-      console.error('Failed to save design tokens:', err);
+      log.error('UIDesignerChat', 'Failed to save design tokens', err);
     }
   }, [colorsPath, addMessage]);
 
-  // ─── Save UI component files ─────────────────────────────────────
+  // ─── Save UI component files ─────────────────────────────────────────────────
   const saveComponents = useCallback(async (components) => {
-    if (!uiPath || !components || components.length === 0) return;
-    try {
-      for (const comp of components) {
+    if (!uiPath || !components || components.length === 0) return 0;
+    let saved = 0;
+    for (const comp of components) {
+      try {
         const filePath = uiPath + '/' + comp.filename;
         await api.safeWriteFile(filePath, comp.content);
+        saved++;
+        log.info('UIDesignerChat', `Saved component: ${comp.filename}`, { chars: comp.content.length });
+      } catch (err) {
+        log.error('UIDesignerChat', `Failed to save component: ${comp.filename}`, err);
       }
-      setHasUI(true);
-    } catch (err) {
-      console.error('Failed to save UI components:', err);
     }
+    if (saved > 0) setHasUI(true);
+    return saved;
   }, [uiPath]);
 
-  // ─── Smart Preview ─────────────────────────────────────────────────
-  // Opens the generated index.html directly. The UI Designer now generates
-  // standalone HTML + CSS + JS files — no transpilation needed.
+  // ─── Preview ─────────────────────────────────────────────────────────────────
   const previewComponents = useCallback(async () => {
-    if (!uiPath || !projectPath) return;
+    if (!uiPath) return;
     try {
       const indexPath = uiPath + '/index.html';
       const exists = await api.exists(indexPath);
       if (exists) {
         await api.openPreview(indexPath);
       } else {
-        console.warn('🎨 [Preview] index.html not found at', indexPath);
+        addMessage('system', '⚠️ index.html not found. Generate the UI mockup first.');
       }
     } catch (err) {
-      console.error('Failed to open preview:', err);
+      log.error('UIDesignerChat', 'Failed to open preview', err);
     }
-  }, [uiPath, projectPath]);
+  }, [uiPath, addMessage]);
 
-  const handleOpenPreview = useCallback(async () => {
-    await previewComponents();
-  }, [previewComponents]);
+  const handleOpenPreview = useCallback(() => previewComponents(), [previewComponents]);
 
-  // ─── Live Preview (Vite dev server) ─────────────────────────────────
+  // ─── Live Preview (Vite dev server) ─────────────────────────────────────────
   const [viteUrl, setViteUrl] = useState(null);
 
-  // Periodically check for Vite dev server when we have UI components.
-  // Skip port 5173 — that is always OneManCrew's own dev server.
   useEffect(() => {
     if (!hasUI) return;
     let cancelled = false;
@@ -287,7 +330,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
       } catch (e) { /* ignore */ }
     };
     check();
-    const interval = setInterval(check, 30000); // re-check every 30s
+    const interval = setInterval(check, 30000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [hasUI]);
 
@@ -295,7 +338,6 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     if (viteUrl) {
       await api.openPreviewUrl(viteUrl);
     } else {
-      // Fallback: try one more time, then fall back to code preview
       const url = await api.detectViteServer();
       if (url && !url.includes(':5173')) {
         setViteUrl(url);
@@ -306,129 +348,162 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     }
   }, [viteUrl, previewComponents]);
 
-  // ─── Core LLM send ──────────────────────────────────────────────────────
-  const sendToLLM = useCallback(async (userMessage, currentPhase, { showUserMsg = true } = {}) => {
+  // ─── Stop streaming ──────────────────────────────────────────────────────────
+  const handleStop = useCallback(() => {
+    if (abortControllerRef.current) {
+      log.info('UIDesignerChat', 'Stopping stream');
+      abortControllerRef.current.abort();
+    }
+  }, []);
+
+  // ─── Skip to Design (escape hatch) ──────────────────────────────────────────
+  const handleForceDesign = useCallback(() => {
+    if (isStreaming) return;
+    setPhase(UI_PHASES.DESIGN);
+    addMessage('system', `Phase: ${UI_PHASE_LABELS[UI_PHASES.DISCOVERY]} → ${UI_PHASE_LABELS[UI_PHASES.DESIGN]} (forced)`);
+    // Use the latest contextDocs from the ref (not stale closure)
+    _sendToLLMInternal(
+      'Discovery is complete. Generate the full UI mockup now based on everything we discussed.',
+      UI_PHASES.DESIGN,
+      { showUserMsg: false }
+    );
+  }, [isStreaming]);
+
+  // ─── Core LLM send ───────────────────────────────────────────────────────────
+  // Internal implementation — uses refs to avoid stale closure issues.
+  const _sendToLLMInternal = useCallback(async (userMessage, currentPhase, { showUserMsg = true } = {}) => {
+    log.info('UIDesignerChat.sendToLLM', 'CALLED', { phase: currentPhase, showUserMsg, msgLen: userMessage.length });
     setError(null);
     if (showUserMsg) addMessage('user', userMessage);
 
     const allMessages = [...messagesRef.current];
-    // Always include the user message in the LLM conversation, even if not shown in UI
     allMessages.push({ role: 'user', content: userMessage });
-    const conversationMessages = buildUIConversationMessages(allMessages, currentPhase, contextDocs);
+    // Always read contextDocs from the ref for freshest value
+    const conversationMessages = buildUIConversationMessages(allMessages, currentPhase, contextDocsRef.current);
+    const totalChars = conversationMessages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
+
+    // Create AbortController for stop-stream support
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     setIsStreaming(true);
-    if (currentPhase === UI_PHASES.DESIGN) setTokenCount(0);
+    if (currentPhase === UI_PHASES.DESIGN) {
+      setTokenCount(0);
+      setEstimatedDesignTokens(Math.max(10000, Math.round(totalChars / 4) + 6000));
+    } else if (currentPhase === UI_PHASES.REVIEW || currentPhase === UI_PHASES.DONE) {
+      setTokenCount(0);
+    }
     addMessage('assistant', '');
 
     try {
       const provider = createLLMProvider(agentSettings);
       let fullResponse = '';
+      let tokenCount_ = 0;
 
       await provider.chat(conversationMessages, agentSettings, {
+        signal: abortController.signal,
         onToken: (token) => {
           fullResponse += token;
+          tokenCount_++;
           updateLastAssistant(fullResponse);
-          if (currentPhase === UI_PHASES.DESIGN) {
+          if (currentPhase === UI_PHASES.DESIGN || currentPhase === UI_PHASES.REVIEW || currentPhase === UI_PHASES.DONE) {
             setTokenCount((c) => c + 1);
           }
         },
         onDone: async (finalText) => {
+          log.info('UIDesignerChat.sendToLLM', 'onDone', { finalLen: finalText?.length, tokens: tokenCount_ });
           fullResponse = finalText || fullResponse;
           updateLastAssistant(fullResponse);
 
-          // Phase transitions
+          // Phase transition: DISCOVERY → DESIGN
           const nextPhase = detectUIPhaseTransition(fullResponse, currentPhase);
           if (nextPhase) {
             setPhase(nextPhase);
             addMessage('system', `Phase: ${UI_PHASE_LABELS[currentPhase]} → ${UI_PHASE_LABELS[nextPhase]}`);
-
-            // Auto-trigger design generation
             if (nextPhase === UI_PHASES.DESIGN) {
-              setTimeout(() => triggerDesign(), 500);
+              // Auto-trigger design generation — use sendToLLM (not a separate function)
+              // to ensure fresh contextDocs (design tokens just saved above)
+              setTimeout(() => _sendToLLMInternal(
+                'Design tokens are set. Now generate the complete UI mockup: index.html, styles.css, and app.js. Include ALL screens from the SRS.',
+                UI_PHASES.DESIGN,
+                { showUserMsg: false }
+              ), 500);
             }
           }
 
-          // Extract and save design tokens + UI component files
-          const output = parseUIDesignerOutput(fullResponse);
+          // ── Auto-nudge: if discovery stalls after 1 user reply, force completion ──
+          // This handles cases where the model ignores [UI_DISCOVERY_COMPLETE] instructions
+          // or outputs the wrong JSON format.
+          if (currentPhase === UI_PHASES.DISCOVERY && !nextPhase) {
+            const userMsgCount = messagesRef.current.filter(m => m.role === 'user').length;
+            if (userMsgCount >= 1) {
+              // Give the model 800ms (so any pending state updates settle),
+              // then check: still in DISCOVERY and not streaming → send a hard nudge.
+              setTimeout(() => {
+                if (!abortControllerRef.current && phaseRef.current === UI_PHASES.DISCOVERY) {
+                  log.info('UIDesignerChat', 'Auto-nudging discovery completion', { userMsgCount });
+                  addMessage('system', '⏩ Completing discovery...');
+                  _sendToLLMInternal(
+                    'Complete discovery now. Do NOT ask any more questions. Output the colors.json block immediately and end with [UI_DISCOVERY_COMPLETE].',
+                    UI_PHASES.DISCOVERY,
+                    { showUserMsg: false }
+                  );
+                }
+              }, 800);
+            }
+          }
 
-          // Save design tokens if present (typically during DISCOVERY)
+          // Extract and save design tokens (typically during DISCOVERY)
+          const output = parseUIDesignerOutput(fullResponse);
           if (output.designTokens) {
             await saveDesignTokens(output.designTokens);
           }
 
-          // Save component files
-          if ((currentPhase === UI_PHASES.DESIGN || currentPhase === UI_PHASES.REVIEW || currentPhase === UI_PHASES.DONE) && output.components.length > 0) {
-            await saveComponents(output.components);
+          // Save component files (during DESIGN, REVIEW, DONE)
+          if ([UI_PHASES.DESIGN, UI_PHASES.REVIEW, UI_PHASES.DONE].includes(currentPhase) && output.components.length > 0) {
+            const savedCount = await saveComponents(output.components);
             const names = output.components.map(c => c.filename).join(', ');
             if (currentPhase === UI_PHASES.DESIGN) {
               setPhase(UI_PHASES.REVIEW);
-              addMessage('system', `UI components generated! ${output.components.length} files saved to src/components/generated_ui/ (${names}). Review and provide feedback.`);
+              setTokenCount(0);
+              addMessage('system', `✅ UI mockup generated! ${savedCount} files saved to src/components/generated_ui/ (${names}). Open Preview to review.`);
             } else {
-              addMessage('system', `UI updated. ${output.components.length} component(s) saved (${names}).`);
+              addMessage('system', `✅ UI updated. ${savedCount} file(s) saved (${names}).`);
             }
           }
         },
         onError: (err) => {
+          log.error('UIDesignerChat.sendToLLM', 'onError', { message: err.message });
           setError(err.message || 'An error occurred.');
           notifyAgentError('UI Designer', err.message);
         },
       });
     } catch (err) {
-      setError(err.message || 'Failed to connect to the LLM provider.');
-      notifyAgentError('UI Designer', err.message);
+      if (err.name !== 'AbortError') {
+        log.error('UIDesignerChat.sendToLLM', 'CATCH', { message: err.message });
+        setError(err.message || 'Failed to connect to the LLM provider.');
+        notifyAgentError('UI Designer', err.message);
+      } else {
+        log.info('UIDesignerChat.sendToLLM', 'Stream stopped by user');
+      }
     } finally {
+      log.info('UIDesignerChat.sendToLLM', 'FINALLY — setIsStreaming(false)');
       setIsStreaming(false);
+      abortControllerRef.current = null;
     }
-  }, [projectPath, agentSettings, contextDocs, addMessage, updateLastAssistant, saveComponents, saveDesignTokens]);
+  }, [agentSettings, addMessage, updateLastAssistant, saveComponents, saveDesignTokens]);
 
-  // ─── Auto-trigger design generation ──────────────────────────────────────
-  const triggerDesign = useCallback(async () => {
-    const conversationMessages = buildUIConversationMessages(messagesRef.current, UI_PHASES.DESIGN, contextDocs);
-    setIsStreaming(true);
-    setTokenCount(0);
-    addMessage('assistant', '');
+  // Public API — forwarded to internal implementation
+  const sendToLLM = _sendToLLMInternal;
 
-    try {
-      const provider = createLLMProvider(agentSettings);
-      let fullResponse = '';
-      await provider.chat(conversationMessages, agentSettings, {
-        onToken: (token) => {
-          fullResponse += token;
-          updateLastAssistant(fullResponse);
-          setTokenCount((c) => c + 1);
-        },
-        onDone: async (finalText) => {
-          fullResponse = finalText || fullResponse;
-          updateLastAssistant(fullResponse);
-
-          const output = parseUIDesignerOutput(fullResponse);
-          if (output.designTokens) {
-            await saveDesignTokens(output.designTokens);
-          }
-          if (output.components.length > 0) {
-            await saveComponents(output.components);
-            const names = output.components.map(c => c.filename).join(', ');
-            setPhase(UI_PHASES.REVIEW);
-            addMessage('system', `UI components generated! ${output.components.length} files saved (${names}).`);
-          }
-        },
-        onError: (err) => setError(err.message || 'Error during design generation.'),
-      });
-    } catch (err) {
-      setError(err.message || 'Failed to generate design.');
-    } finally {
-      setIsStreaming(false);
-    }
-  }, [agentSettings, contextDocs, addMessage, updateLastAssistant, saveComponents, saveDesignTokens]);
-
-  // ─── Quick reply handler (from option buttons) ─────────────────────────
+  // ─── Quick reply handler ─────────────────────────────────────────────────────
   const handleQuickReply = async (value) => {
     if (isStreaming) return;
     setInput('');
     await sendToLLM(value, phase);
   };
 
-  // ─── Handle user send ────────────────────────────────────────────────────
+  // ─── Handle user send ────────────────────────────────────────────────────────
   const handleSend = async () => {
     if (!input.trim() || isStreaming) return;
     const userMessage = input.trim();
@@ -436,25 +511,25 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     await sendToLLM(userMessage, phase);
   };
 
-  // ─── Approve design ──────────────────────────────────────────────────────
+  // ─── Approve design ──────────────────────────────────────────────────────────
   const handleApprove = () => {
     if (isStreaming) return;
     setPhase(UI_PHASES.DONE);
-    addMessage('system', 'UI design approved! You can still request changes or proceed to the next phase.');
+    addMessage('system', '✅ UI design approved! You can still request changes or proceed to the next phase.');
     notifyAgentComplete('UI Designer');
   };
 
-  // ─── Reset agent ────────────────────────────────────────────────────────
+  // ─── Reset agent ────────────────────────────────────────────────────────────
   const handleReset = async () => {
     if (isStreaming) return;
-    if (!confirm('Reset the UI Designer agent? This will delete the UI mockup and chat history.')) return;
+    if (!confirm('Reset the UI Designer? This will delete the UI mockup and chat history.')) return;
+    abortControllerRef.current?.abort();
     try {
-      // Delete generated UI component files
       if (uiPath) {
         try {
           const entries = await api.readDir(uiPath);
           for (const entry of (entries || [])) {
-            if (!entry.isDirectory && /\.(jsx|tsx|html|css|js)$/.test(entry.name)) {
+            if (!entry.isDirectory && /\.(html|css|js|jsx|tsx)$/.test(entry.name)) {
               await api.writeFile(entry.path, '').catch(() => {});
             }
           }
@@ -485,6 +560,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   };
 
   const phaseColor = PHASE_COLORS[phase] || PHASE_COLORS[UI_PHASES.DISCOVERY];
+  const assistantMsgCount = messages.filter(m => m.role === 'assistant' && m.content).length;
 
   return (
     <div className="h-full flex flex-col">
@@ -506,7 +582,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-gray-200 leading-tight">The UI Designer</p>
-            <p className="text-[10px] text-gray-500">Senior UX/UI Expert &middot; 30+ years</p>
+            <p className="text-[10px] text-gray-500">Senior UX/UI Expert · 30+ years</p>
           </div>
 
           <div className="flex-1" />
@@ -587,7 +663,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
           </div>
         )}
 
-        {!messages.some(m => m.role === 'user' || m.role === 'assistant') && phase !== UI_PHASES.LOADING && (
+        {!messages.some(m => m.role === 'user' || m.role === 'assistant') && phase !== UI_PHASES.LOADING && !error && (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="w-11 h-11 rounded-2xl bg-pink-500/10 flex items-center justify-center mb-3">
               <svg className="w-5 h-5 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -596,10 +672,10 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
             </div>
             <h3 className="text-sm font-semibold text-gray-300 mb-1">UI Designer Ready</h3>
             <p className="text-xs text-gray-500 max-w-sm mb-4">
-              I've read the SRS and HLD. I'll design a complete UI mockup based on your project requirements.
+              I've read the SRS and HLD. I'll design a complete UI mockup — all screens, navigation, and interactions.
             </p>
             <button
-              onClick={() => sendToLLM('Start working. Introduce yourself and begin analyzing the project documents to design the UI.', phase, { showUserMsg: false })}
+              onClick={() => sendToLLM('Analyze the SRS and HLD. List every navigable screen you identified. State your design decisions for colors, typography, and layout. Then ask at most 2 short questions about visual preferences.', phase, { showUserMsg: false })}
               disabled={isStreaming}
               className="px-5 py-2.5 bg-pink-500 text-white rounded-xl text-sm font-semibold hover:bg-pink-600 transition-all duration-200 shadow-lg shadow-pink-500/20 hover:shadow-pink-500/30 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
@@ -649,23 +725,58 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         </label>
       )}
 
-      {/* Generation Progress */}
-      {(phase === UI_PHASES.DESIGN) && (
+      {/* Generation Progress — show during DESIGN and REVIEW/DONE streaming */}
+      {(phase === UI_PHASES.DESIGN || ((phase === UI_PHASES.REVIEW || phase === UI_PHASES.DONE) && isStreaming)) && (
         <GenerationProgress
           isGenerating={isStreaming}
           tokenCount={tokenCount}
-          estimatedTokens={8000}
+          estimatedTokens={phase === UI_PHASES.DESIGN ? estimatedDesignTokens : 5000}
         />
       )}
 
       {/* Error */}
       {error && (
-        <div className="mx-4 mb-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-400 flex items-center gap-2">
-          <span className="flex-1">{error}</span>
-          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300 shrink-0">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        <div className="mx-4 mb-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-xs text-red-400">
+          <div className="flex items-start gap-2">
+            <svg className="w-3.5 h-3.5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
+            <span className="flex-1">{error}</span>
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300 shrink-0">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          {/* Recovery actions */}
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={() => { setError(null); setHistoryLoaded(false); }}
+              className="px-2.5 py-1 text-[10px] bg-red-500/20 border border-red-500/30 rounded text-red-300 hover:bg-red-500/30 transition-colors"
+            >
+              Retry
+            </button>
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="px-2.5 py-1 text-[10px] bg-surface-elevated border border-border rounded text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                ← Back to Architect
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Skip to Design — shown in DISCOVERY after ≥1 assistant reply */}
+      {phase === UI_PHASES.DISCOVERY && !isStreaming && assistantMsgCount >= 1 && (
+        <div className="mx-4 mb-1 flex justify-end">
+          <button
+            onClick={handleForceDesign}
+            title="Skip remaining discovery questions and start generating the UI mockup"
+            className="text-[10px] text-gray-600 hover:text-pink-400 transition-colors underline underline-offset-2"
+          >
+            Skip to Design →
           </button>
         </div>
       )}
@@ -673,7 +784,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
       {/* Approval Buttons (REVIEW phase) */}
       {phase === UI_PHASES.REVIEW && !isStreaming && (
         <div className="mx-4 mb-2 p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl">
-          <p className="text-xs text-amber-300 mb-2 font-medium">Components saved to src/components/generated_ui/. Approve the design?</p>
+          <p className="text-xs text-amber-300 mb-2 font-medium">UI mockup saved to src/components/generated_ui/. Approve the design?</p>
           <div className="flex gap-2">
             <button onClick={handleApprove}
               className="px-4 py-1.5 bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg text-xs font-medium hover:bg-green-500/30 transition-colors">
@@ -687,7 +798,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
         </div>
       )}
 
-      {/* Done: Save & Next */}
+      {/* Done: Next phase */}
       {phase === UI_PHASES.DONE && !isStreaming && (
         <div className="mx-4 mb-2 p-3 bg-green-500/5 border border-green-500/20 rounded-xl">
           <p className="text-xs text-green-300 mb-2 font-medium">UI design approved! Proceed to the next phase?</p>
@@ -724,6 +835,18 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
             style={{ height: 'auto', overflow: 'hidden' }}
             onInput={(e) => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }}
           />
+          {/* Stop button — visible while streaming */}
+          {isStreaming && (
+            <button
+              onClick={handleStop}
+              title="Stop generation"
+              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-all"
+            >
+              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="5" y="5" width="14" height="14" rx="2" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={handleSend}
             disabled={!input.trim() || isStreaming || phase === UI_PHASES.DESIGN || phase === UI_PHASES.LOADING}
@@ -765,7 +888,7 @@ function MessageBubble({ message, isLastAssistant = false, onQuickReply, isStrea
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[90%]`}>
+      <div className="max-w-[90%]">
         <div className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
           isUser ? 'bg-pink-500/15 text-gray-200 rounded-br-md' : 'bg-surface-elevated border border-border text-gray-300 rounded-bl-md'
         }`}>

@@ -55,7 +55,7 @@ class OpenAICompatibleProvider {
     this.getApiKey = getApiKey;
   }
 
-  async chat(messages, settings, { onToken, onDone, onError, agentId }) {
+  async chat(messages, settings, { onToken, onDone, onError, agentId, signal }) {
     const apiKey = this.getApiKey(settings);
     const model = settings.selectedModel || 'gpt-4o';
     log.info('OpenAIProvider', 'chat() called', { baseUrl: this.baseUrl, model, agentId, messageCount: messages.length, hasApiKey: !!apiKey });
@@ -75,6 +75,7 @@ class OpenAICompatibleProvider {
           max_tokens: maxOut,
           stream: true,
         }),
+        signal,
       });
 
       log.info('OpenAIProvider', 'Fetch response received', { status: response.status, ok: response.ok });
@@ -127,6 +128,11 @@ class OpenAICompatibleProvider {
       });
       onDone(fullText);
     } catch (err) {
+      if (err.name === 'AbortError') {
+        log.info('OpenAIProvider', 'Stream aborted by user');
+        onDone(fullText);
+        return;
+      }
       log.error('OpenAIProvider', 'chat() error', { message: err.message });
       onError(err);
     }
@@ -136,7 +142,7 @@ class OpenAICompatibleProvider {
 // ─── Anthropic Provider ───────────────────────────────────────────────────────
 
 class AnthropicProvider {
-  async chat(messages, settings, { onToken, onDone, onError, agentId }) {
+  async chat(messages, settings, { onToken, onDone, onError, agentId, signal }) {
     const apiKey = settings.apiKeys?.anthropic;
     if (!apiKey) {
       log.error('AnthropicProvider', 'No API key configured');
@@ -171,6 +177,7 @@ class AnthropicProvider {
           messages: chatMessages,
           stream: true,
         }),
+        signal,
       });
 
       log.info('AnthropicProvider', 'Fetch response received', { status: response.status, ok: response.ok });
@@ -224,6 +231,11 @@ class AnthropicProvider {
       });
       onDone(fullText);
     } catch (err) {
+      if (err.name === 'AbortError') {
+        log.info('AnthropicProvider', 'Stream aborted by user');
+        onDone(fullText);
+        return;
+      }
       log.error('AnthropicProvider', 'chat() error', { message: err.message });
       onError(err);
     }
@@ -233,7 +245,7 @@ class AnthropicProvider {
 // ─── Gemini Provider ──────────────────────────────────────────────────────────
 
 class GeminiProvider {
-  async chat(messages, settings, { onToken, onDone, onError, agentId }) {
+  async chat(messages, settings, { onToken, onDone, onError, agentId, signal }) {
     const apiKey = settings.apiKeys?.gemini;
     if (!apiKey) {
       log.error('GeminiProvider', 'No API key configured');
@@ -267,6 +279,7 @@ class GeminiProvider {
               maxOutputTokens: settings.maxOutputTokens || 16384,
             },
           }),
+          signal,
         }
       );
 
@@ -321,6 +334,11 @@ class GeminiProvider {
       });
       onDone(fullText);
     } catch (err) {
+      if (err.name === 'AbortError') {
+        log.info('GeminiProvider', 'Stream aborted by user');
+        onDone(fullText);
+        return;
+      }
       log.error('GeminiProvider', 'chat() error', { message: err.message });
       onError(err);
     }

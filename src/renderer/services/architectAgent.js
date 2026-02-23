@@ -279,8 +279,8 @@ export function detectPhaseTransition(responseText, currentPhase) {
 export function isApproval(userMessage) {
   const msg = userMessage.toLowerCase().trim();
   const approvalPatterns = [
-    /^(yes|yep|yeah|yup|sure|ok|okay|approve|approved|confirm|confirmed|go ahead|proceed|looks good|lgtm|אשר|מאושר|בסדר|כן|קדימה|תמשיך|אפשר להמשיך)/,
-    /\b(approve|confirm|go ahead|proceed|looks good|lgtm|agreed|accept)\b/,
+    /^(yes|yep|yeah|yup|sure|ok|okay|k|approve|approved|confirm|confirmed|go ahead|proceed|looks good|lgtm|sounds good|perfect|great|let'?s go|do it|go|continue|next|agreed|accept|אשר|מאושר|בסדר|כן|קדימה|תמשיך|אפשר להמשיך|יאללה|אחלה|מעולה|סבבה|יופי|בהחלט)/,
+    /\b(approve|confirm|go ahead|proceed|looks good|lgtm|agreed|accept|sounds good|perfect|let's go)\b/,
   ];
   return approvalPatterns.some((p) => p.test(msg));
 }
@@ -302,11 +302,8 @@ export function buildConversationMessages(chatHistory, currentPhase, projectPath
     }
   }
 
-  // Safety: ensure last message is 'user' (required by Anthropic and some providers)
-  if (messages.length > 1 && messages[messages.length - 1].role === 'assistant') {
-    messages.pop();
-  }
-
+  // NOTE: role alternation (ensuring last msg is 'user') is handled inside
+  // each provider's sanitizeMessages — no need to strip here and risk losing context.
   return messages;
 }
 
@@ -356,51 +353,61 @@ export function parseArchitectOutput(text) {
 
 /**
  * Extracts a fenced block (```tag ... ```) that may contain nested code blocks.
- * Finds the opening ```tag and then counts nested ``` pairs to find the true closing fence.
+ *
+ * Strategy:
+ *   1. Find the opening ```tag fence.
+ *   2. Limit the search space to before the OTHER document block's fence
+ *      (e.g., when extracting HLD, stop before ```srs, and vice versa).
+ *      This prevents the SRS block's closing ``` from being treated as ours.
+ *   3. Within that search space, find the LAST ``` that appears alone on its
+ *      own line — that is always the outer closing fence of our block.
+ *      Named inner blocks (```json, ```mermaid) and unnamed inner blocks
+ *      (plain ```) all appear BEFORE the actual outer closing fence.
+ *   4. If no closing fence is found, return everything (LLM may have omitted it).
+ *
+ * This correctly handles:
+ *   - Named nested blocks:   ```json:required_scripts ... ``` (language tag)
+ *   - Unnamed nested blocks: ``` ... ``` (no tag — e.g. component trees, ASCII art)
+ *
  * Returns the content between the opening and closing fences, or null if not found.
  */
 function _extractFencedBlock(text, tag) {
+  // Find the opening fence (e.g., ```hld\n)
   const openPattern = new RegExp('```' + tag + '\\s*\\n');
   const openMatch = openPattern.exec(text);
   if (!openMatch) return null;
 
-  const startIdx = openMatch.index + openMatch[0].length;
-  let depth = 0;
-  let i = startIdx;
+  const blockStart = openMatch.index + openMatch[0].length;
 
-  // Walk through the text character by character, tracking nested ``` blocks
-  while (i < text.length) {
-    // Check for ``` at current position (must be at start of line or after newline)
-    if (text.substring(i, i + 3) === '```') {
-      // Look ahead: is this an opening fence (has content after ```) or closing fence (``` alone on line)?
-      const restOfLine = text.substring(i + 3, text.indexOf('\n', i + 3) === -1 ? text.length : text.indexOf('\n', i + 3)).trim();
+  // Limit the search space: if the OTHER block is present, don't look past its start.
+  // This prevents the other block's ``` from being treated as our closing fence.
+  const otherTag = tag === 'hld' ? 'srs' : 'hld';
+  const otherPattern = new RegExp('```' + otherTag + '\\s*\\n');
+  const otherMatch = otherPattern.exec(text.slice(blockStart));
+  const searchSpace = otherMatch
+    ? text.slice(blockStart, blockStart + otherMatch.index)
+    : text.slice(blockStart);
 
-      if (depth === 0 && restOfLine.length === 0) {
-        // This is the closing fence for our top-level block
-        return text.substring(startIdx, i).trim();
-      }
-
-      if (restOfLine.length > 0 && !restOfLine.startsWith('`')) {
-        // Opening fence of a nested code block (e.g., ```js, ```json)
-        depth++;
-        i += 3 + restOfLine.length;
-      } else if (depth > 0 && restOfLine.length === 0) {
-        // Closing fence of a nested code block
-        depth--;
-        i += 3;
-      } else {
-        // Closing fence at depth 0 — this is our match
-        return text.substring(startIdx, i).trim();
-      }
-    } else {
-      i++;
+  // Find the LAST ``` that appears alone on its own line in the search space.
+  // That ``` is the outer closing fence of our block.
+  // (Inner named/unnamed code blocks also use ```, but the outer closer is always LAST.)
+  const lines = searchSpace.split('\n');
+  let closingLineIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim() === '```') {
+      closingLineIdx = i;
+      break;
     }
   }
 
-  // If we reached end of text without finding closing fence, return everything
-  // (the LLM may have forgotten the closing fence)
-  const content = text.substring(startIdx).trim();
-  return content.length > 200 ? content : null;
+  if (closingLineIdx === -1) {
+    // No closing fence found — return everything (LLM may have been cut off mid-response)
+    const content = searchSpace.trim();
+    return content.length > 0 ? content : null;
+  }
+
+  const content = lines.slice(0, closingLineIdx).join('\n').trim();
+  return content.length > 0 ? content : null;
 }
 
 // ─── Atomic Document Save with Merge ────────────────────────────────────────
@@ -477,4 +484,48 @@ export async function saveArchitectDocs(projectPath, docs, { onlyKeys = null } =
   }
 
   return { saved, errors };
+}
+
+// ─── Shared Knowledge Base Update ────────────────────────────────────────────
+
+/**
+ * Updates docs/context_summary.json with the architect's key decisions.
+ * Called after SRS + HLD are saved so all downstream agents share context.
+ */
+export async function updateContextSummary(projectPath, docs) {
+  const contextPath = projectPath.replace(/[\\/]$/, '') + '/docs/context_summary.json';
+  try {
+    const existing = await api.readFile(contextPath).catch(() => null);
+    const ctx = existing ? JSON.parse(existing) : {};
+
+    ctx.architect_completed = true;
+    ctx.last_updated = new Date().toISOString();
+
+    // Extract project overview from SRS
+    if (docs.srs) {
+      const overviewMatch = docs.srs.match(/##?\s*(?:Project Overview|Overview|Project Name)([\s\S]*?)(?=\n##|\n#|$)/i);
+      if (overviewMatch) ctx.project_overview = overviewMatch[1].trim().substring(0, 400);
+    }
+
+    // Extract tech stack summary from HLD
+    if (docs.hld) {
+      const techMatch = docs.hld.match(/##?\s*(?:Tech Stack|Technology Stack|Technologies|Stack)([\s\S]*?)(?=\n##|\n#|$)/i);
+      if (techMatch) ctx.tech_stack_summary = techMatch[1].trim().substring(0, 600);
+
+      // Extract required scripts JSON block if present
+      const scriptsMatch = docs.hld.match(/```json:required_scripts\s*([\s\S]*?)```/i);
+      if (scriptsMatch) {
+        try { ctx.required_scripts = JSON.parse(scriptsMatch[1].trim()); } catch (_) {}
+      }
+
+      // Extract folder structure hint
+      const folderMatch = docs.hld.match(/##?\s*(?:Folder Structure|Directory Structure|Project Structure)([\s\S]*?)(?=\n##|\n#|$)/i);
+      if (folderMatch) ctx.folder_structure = folderMatch[1].trim().substring(0, 500);
+    }
+
+    await api.writeFile(contextPath, JSON.stringify(ctx, null, 2));
+    log.info('updateContextSummary', 'Updated shared knowledge base', { path: contextPath });
+  } catch (e) {
+    log.warn('updateContextSummary', 'Failed to update context_summary.json', { error: e.message });
+  }
 }

@@ -3,7 +3,7 @@ import { createLLMProvider, getAgentSettings } from '../services/llmProviders';
 import {
   PHASES, PHASE_LABELS,
   detectPhaseTransition, isApproval,
-  buildConversationMessages, parseArchitectOutput, saveArchitectDocs,
+  buildConversationMessages, parseArchitectOutput, saveArchitectDocs, updateContextSummary,
 } from '../services/architectAgent';
 import api from '../services/electronBridge';
 import ReactMarkdown from 'react-markdown';
@@ -45,12 +45,14 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [estimatedGenerationTokens, setEstimatedGenerationTokens] = useState(15000);
   const agentSettings = React.useMemo(() => getAgentSettings(settings, 'architect'), [settings]);
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const inputRef = useRef(null);
   const messagesRef = useRef(messages);
   const phaseRef = useRef(phase);
+  const abortControllerRef = useRef(null);
   messagesRef.current = messages;
   phaseRef.current = phase;
 
@@ -207,8 +209,16 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
     const totalChars = conversationMessages.reduce((sum, m) => sum + (m.content?.length || 0), 0);
     log.info('sendToLLM', 'Conversation built', { messageCount: conversationMessages.length, totalChars, lastRole: conversationMessages[conversationMessages.length - 1]?.role });
 
+    // Create an AbortController so the user can stop the stream mid-way
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     setIsStreaming(true);
-    if (currentPhase === PHASES.GENERATION) setTokenCount(0);
+    if (currentPhase === PHASES.GENERATION) {
+      setTokenCount(0);
+      // Estimate output tokens from context size (rough: 1 token ≈ 4 chars, add 5k buffer for docs)
+      setEstimatedGenerationTokens(Math.max(12000, Math.round(totalChars / 4) + 5000));
+    }
     addMessage('assistant', '');
 
     try {
@@ -218,6 +228,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
       let tokenCount_ = 0;
 
       await provider.chat(conversationMessages, agentSettings, {
+        signal: abortController.signal,
         onToken: (token) => {
           fullResponse += token;
           tokenCount_++;
@@ -239,7 +250,13 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             setPhase(nextPhase);
             addMessage('system', `Phase: ${PHASE_LABELS[currentPhase]} → ${PHASE_LABELS[nextPhase]}`);
             if (nextPhase === PHASES.ANALYSIS) {
-              setTimeout(() => triggerAnalysis(), 500);
+              // Use sendToLLM with a silent trigger message — avoids duplicate code
+              // and ensures Anthropic-compatible conversation (ends with user role)
+              setTimeout(() => sendToLLM(
+                'Discovery is complete. Present your full structured analysis now.',
+                PHASES.ANALYSIS,
+                { showUserMsg: false }
+              ), 500);
             }
           }
 
@@ -253,10 +270,13 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             if (phase === PHASES.GENERATION) {
               setPhase(PHASES.DONE);
               setView(VIEW.SPLIT);
+              setTokenCount(0);
               notifyAgentComplete('Architect');
             }
             if (saved.length > 0) {
               addMessage('system', `[ARCHITECT] Infrastructure plan secured to disk: ${saved.join(', ')}`);
+              // Update the shared knowledge base so downstream agents have context
+              await updateContextSummary(projectPath, docs).catch(() => {});
             }
             if (errors.length > 0) {
               addMessage('system', `⚠️ Save errors: ${errors.join('; ')}`);
@@ -270,10 +290,10 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
                 const missingDoc = missingSRS ? 'SRS' : 'HLD';
                 const missingKey = missingSRS ? 'srs' : 'hld';
                 const missingFence = missingSRS ? '```srs' : '```hld';
-                console.log(`[ARCHITECT:autoFollowUp] Missing ${missingDoc} — sending follow-up request`);
+                log.info('sendToLLM', `autoFollowUp — Missing ${missingDoc}`);
                 addMessage('system', `⏳ ${missingDoc} was not included — requesting it automatically...`);
-                // Mark that the next save should only save the missing key
                 pendingFollowUpKeyRef.current = missingKey;
+                setTokenCount(0);
                 setTimeout(() => {
                   sendToLLM(
                     `IMPORTANT: You did NOT produce the ${missingDoc} document in your previous response. I need it NOW.\n\n` +
@@ -289,7 +309,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             }
           };
 
-          // Generation: extract and save docs (atomic save with merge)
+          // Generation: extract and save docs
           if (currentPhase === PHASES.GENERATION) {
             const docs = parseArchitectOutput(fullResponse);
             if (docs.srs || docs.hld) {
@@ -297,16 +317,15 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
             }
           }
 
-          // Post-generation edits: if DONE and agent responds with doc fences, merge-update files
+          // Post-generation edits: if DONE and agent responds with doc fences, update files
           if (currentPhase === PHASES.DONE) {
-            console.log(`[ARCHITECT:onDone] DONE phase — fullResponse length: ${fullResponse.length}, first 200: ${fullResponse.substring(0, 200)}`);
+            log.info('sendToLLM', 'DONE phase onDone', { responseLen: fullResponse.length });
             const docs = parseArchitectOutput(fullResponse);
             if (docs.srs || docs.hld) {
-              // If this is a follow-up response, only save the missing doc
               const followUpKey = pendingFollowUpKeyRef.current;
               if (followUpKey) {
-                pendingFollowUpKeyRef.current = null; // reset
-                console.log(`[ARCHITECT:onDone] Follow-up save — only saving: ${followUpKey}`);
+                pendingFollowUpKeyRef.current = null;
+                log.info('sendToLLM', `Follow-up save — only saving: ${followUpKey}`);
                 await _handleDocSave(docs, PHASES.DONE, { onlyKeys: [followUpKey], isFollowUp: true });
               } else {
                 await _handleDocSave(docs, PHASES.DONE);
@@ -321,43 +340,40 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
         },
       });
     } catch (err) {
-      log.error('sendToLLM', 'CATCH block — provider.chat threw', { message: err.message, stack: err.stack });
-      setError(err.message || 'Failed to connect to the LLM provider.');
-      notifyAgentError('Architect', err.message);
+      // AbortError means user clicked Stop — not a real error, keep what was generated
+      if (err.name !== 'AbortError') {
+        log.error('sendToLLM', 'CATCH block — provider.chat threw', { message: err.message, stack: err.stack });
+        setError(err.message || 'Failed to connect to the LLM provider.');
+        notifyAgentError('Architect', err.message);
+      } else {
+        log.info('sendToLLM', 'Stream stopped by user');
+      }
     } finally {
       log.info('sendToLLM', 'FINALLY — setIsStreaming(false)');
       setIsStreaming(false);
+      abortControllerRef.current = null;
     }
   }, [projectPath, agentSettings, addMessage, updateLastAssistant]);
 
-  // ─── Auto-trigger analysis ───────────────────────────────────────────────
-  const triggerAnalysis = useCallback(async () => {
-    const conversationMessages = buildConversationMessages(messagesRef.current, PHASES.ANALYSIS, projectPath);
-    setIsStreaming(true);
-    addMessage('assistant', '');
-
-    try {
-      const provider = createLLMProvider(agentSettings);
-      let fullResponse = '';
-      await provider.chat(conversationMessages, agentSettings, {
-        onToken: (token) => { fullResponse += token; updateLastAssistant(fullResponse); },
-        onDone: (finalText) => {
-          fullResponse = finalText || fullResponse;
-          updateLastAssistant(fullResponse);
-          const nextPhase = detectPhaseTransition(fullResponse, PHASES.ANALYSIS);
-          if (nextPhase) {
-            setPhase(nextPhase);
-            addMessage('system', `Phase: ${PHASE_LABELS[PHASES.ANALYSIS]} → ${PHASE_LABELS[nextPhase]}`);
-          }
-        },
-        onError: (err) => setError(err.message || 'Error during analysis.'),
-      });
-    } catch (err) {
-      setError(err.message || 'Failed to run analysis.');
-    } finally {
-      setIsStreaming(false);
+  // ─── Stop streaming ──────────────────────────────────────────────────────
+  const handleStop = useCallback(() => {
+    if (abortControllerRef.current) {
+      log.info('handleStop', 'Aborting stream');
+      abortControllerRef.current.abort();
     }
-  }, [projectPath, agentSettings, addMessage, updateLastAssistant]);
+  }, []);
+
+  // ─── Force phase advance (escape hatch when LLM forgets [DISCOVERY_COMPLETE]) ──
+  const handleForceAnalysis = useCallback(() => {
+    if (isStreaming) return;
+    setPhase(PHASES.ANALYSIS);
+    addMessage('system', `Phase: ${PHASE_LABELS[PHASES.DISCOVERY]} → ${PHASE_LABELS[PHASES.ANALYSIS]} (forced)`);
+    sendToLLM(
+      'Discovery is complete. Present your full structured analysis now.',
+      PHASES.ANALYSIS,
+      { showUserMsg: false }
+    );
+  }, [isStreaming, addMessage, sendToLLM]);
 
   // ─── Quick reply handler (from option buttons) ─────────────────────────
   const handleQuickReply = async (value) => {
@@ -444,17 +460,21 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
   const handleReset = async () => {
     if (isStreaming) return;
     if (!confirm('Reset the Architect agent? This will delete SRS.md, HLD.md, and chat history.')) return;
+    // Stop any in-progress stream first
+    abortControllerRef.current?.abort();
     const docsPath = projectPath.replace(/[\\/]$/, '') + '/docs';
-    try {
-      await api.writeFile(docsPath + '/SRS.md', '').catch(() => {});
-      await api.writeFile(docsPath + '/HLD.md', '').catch(() => {});
-      await api.writeFile(chatHistoryPath, '').catch(() => {});
-    } catch (e) { /* ignore */ }
+    await Promise.allSettled([
+      api.writeFile(docsPath + '/SRS.md', ''),
+      api.writeFile(docsPath + '/HLD.md', ''),
+      api.writeFile(chatHistoryPath, ''),
+    ]);
     setMessages([]);
     setPhase(PHASES.DISCOVERY);
     setView(VIEW.CHAT);
     setTokenCount(0);
     setDocsReady(false);
+    setDocsVersion(0);
+    setEstimatedGenerationTokens(15000);
     setError(null);
   };
 
@@ -653,7 +673,7 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
               <GenerationProgress
                 isGenerating={phase === PHASES.GENERATION && isStreaming}
                 tokenCount={tokenCount}
-                estimatedTokens={6000}
+                estimatedTokens={estimatedGenerationTokens}
               />
             )}
 
@@ -665,6 +685,19 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
+                </button>
+              </div>
+            )}
+
+            {/* Force Analysis — shown in DISCOVERY after ≥2 assistant replies if user is stuck */}
+            {phase === PHASES.DISCOVERY && !isStreaming && messages.filter(m => m.role === 'assistant' && m.content).length >= 2 && (
+              <div className="mx-4 mb-1 flex justify-end">
+                <button
+                  onClick={handleForceAnalysis}
+                  title="Skip remaining discovery questions and jump straight to analysis"
+                  className="text-[10px] text-gray-600 hover:text-amber-400 transition-colors underline underline-offset-2"
+                >
+                  Skip to Analysis →
                 </button>
               </div>
             )}
@@ -701,6 +734,18 @@ export default function ChatInterface({ projectPath, settings, onUpdateSettings,
                   style={{ height: 'auto', overflow: 'hidden' }}
                   onInput={(e) => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }}
                 />
+                {/* Stop button — only visible while streaming */}
+                {isStreaming && (
+                  <button
+                    onClick={handleStop}
+                    title="Stop generation"
+                    className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30 transition-all"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                      <rect x="5" y="5" width="14" height="14" rx="2" />
+                    </svg>
+                  </button>
+                )}
                 <button
                   onClick={handleSend}
                   disabled={!input.trim() || isStreaming || phase === PHASES.GENERATION}
