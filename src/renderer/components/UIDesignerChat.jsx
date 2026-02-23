@@ -48,6 +48,8 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
   const abortControllerRef = useRef(null);
   // Tracks the latest contextDocs synchronously so sendToLLM's closure always reads current value
   const contextDocsRef = useRef(contextDocs);
+  // Tracks whether we already sent a discovery nudge (so we don't loop forever)
+  const discoveryNudgeSentRef = useRef(false);
 
   messagesRef.current = messages;
   phaseRef.current = phase;
@@ -431,6 +433,28 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
             }
           }
 
+          // Extract and save design tokens (typically during DISCOVERY)
+          const output = parseUIDesignerOutput(fullResponse);
+          if (output.designTokens) {
+            await saveDesignTokens(output.designTokens);
+          }
+
+          // ── Force transition: if tokens saved + nudge already sent → don't wait for [UI_DISCOVERY_COMPLETE] ──
+          // This breaks the infinite loop: model saves tokens but keeps forgetting the completion token.
+          // After the first nudge, if it still saved tokens, we trust that's good enough.
+          if (currentPhase === UI_PHASES.DISCOVERY && !nextPhase && output.designTokens && discoveryNudgeSentRef.current) {
+            log.info('UIDesignerChat', 'Forcing DISCOVERY→DESIGN (tokens saved after nudge)');
+            discoveryNudgeSentRef.current = false;
+            setPhase(UI_PHASES.DESIGN);
+            addMessage('system', `Phase: ${UI_PHASE_LABELS[UI_PHASES.DISCOVERY]} → ${UI_PHASE_LABELS[UI_PHASES.DESIGN]}`);
+            setTimeout(() => _sendToLLMInternal(
+              'Design tokens are set. Now generate the complete UI mockup: index.html, styles.css, and app.js. Include ALL screens from the SRS.',
+              UI_PHASES.DESIGN,
+              { showUserMsg: false }
+            ), 500);
+            return; // skip further processing
+          }
+
           // ── Auto-nudge: if discovery stalls (no [UI_DISCOVERY_COMPLETE] emitted) ──
           // Fires after ANY DISCOVERY response — regardless of user message count.
           // (The initial trigger is sent with showUserMsg:false so it never adds to
@@ -439,11 +463,11 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
           // The check inside the timeout guards against double-nudge if user already replied.
           if (currentPhase === UI_PHASES.DISCOVERY && !nextPhase) {
             const discoveryMsgCount = messagesRef.current.filter(m => m.role === 'assistant' && m.content).length;
-            // Nudge after ANY assistant response in DISCOVERY (even the first one)
             setTimeout(() => {
               // Only fire if we're still in DISCOVERY and no stream is running
               if (!abortControllerRef.current && phaseRef.current === UI_PHASES.DISCOVERY) {
                 log.info('UIDesignerChat', 'Auto-nudging discovery completion', { discoveryMsgCount });
+                discoveryNudgeSentRef.current = true; // mark nudge sent (prevents infinite loop)
                 addMessage('system', '⏩ Completing discovery...');
                 _sendToLLMInternal(
                   'IMPORTANT: You forgot to include the colors.json block and [UI_DISCOVERY_COMPLETE] in your previous response. ' +
@@ -453,12 +477,6 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
                 );
               }
             }, 5000);
-          }
-
-          // Extract and save design tokens (typically during DISCOVERY)
-          const output = parseUIDesignerOutput(fullResponse);
-          if (output.designTokens) {
-            await saveDesignTokens(output.designTokens);
           }
 
           // Save component files (during DESIGN, REVIEW, DONE)
@@ -526,6 +544,7 @@ export default function UIDesignerChat({ projectPath, settings, onUpdateSettings
     if (isStreaming) return;
     if (!confirm('Reset the UI Designer? This will delete the UI mockup and chat history.')) return;
     abortControllerRef.current?.abort();
+    discoveryNudgeSentRef.current = false;
     try {
       if (uiPath) {
         try {

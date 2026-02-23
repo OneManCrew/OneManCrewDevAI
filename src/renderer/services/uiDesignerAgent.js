@@ -56,10 +56,15 @@ const DISCOVERY_PROMPT = BASE_PERSONA + '\n\n' +
   '- "I\'ll use a dark theme: #1E293B background, #3B82F6 primary"\n' +
   '- "Inter font, sidebar navigation, card-based layout"\n\n' +
 
-  '**Part 3 — At most 2 short preference questions (OPTIONAL — plain sentences only):**\n' +
-  '✅ CORRECT: "Do you prefer dark or light mode?"\n' +
-  '✅ CORRECT: "Any brand colors you want me to use?"\n' +
-  '❌ WRONG: numbered lists with sub-bullets, section headers like "Visual Preferences:"\n\n' +
+  '**Part 3 — At most 2 preference questions (OPTIONAL):**\n' +
+  'If you want to ask questions, you MUST use the structured questions block below (renders as clickable buttons):\n\n' +
+  F + 'questions\n' +
+  '[\n' +
+  '  { "q": "Dark mode or light mode?", "options": ["Dark", "Light", "Your choice"] },\n' +
+  '  { "q": "Any specific brand colors?", "options": ["Use your suggested palette", "Traditional blue/gold", "Modern minimal"] }\n' +
+  ']\n' + F + '\n\n' +
+  '❌ NEVER ask questions as numbered lists, bullet points, or plain prose text.\n' +
+  '❌ NEVER ask about fonts, CSS frameworks, icon libraries, responsiveness, border-radius.\n\n' +
 
   '**Part 4 — THE colors.json BLOCK (MANDATORY — include in EVERY response):**\n\n' +
   F + 'json:colors.json\n' +
